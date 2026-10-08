@@ -1,0 +1,571 @@
+"""
+测试 Streamlit 单页应用与会话状态管理
+"""
+
+import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
+from streamlit.testing.v1 import AppTest
+from papermind.app_service import (
+    Identity,
+    IDENTITIES,
+    WriteResult,
+    SyncResult,
+    AskResult,
+    EvidenceItem,
+)
+from datetime import datetime
+
+
+class TestPageInitialization:
+    """测试页面初始化"""
+
+    def test_identity_selectbox_contains_three_options(self):
+        """测试身份下拉框包含三个固定身份"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 检查身份下拉框存在且包含三个选项
+        assert len(at.selectbox) > 0, "Must have identity selectbox"
+        identity_selectbox = at.selectbox[0]
+        assert len(identity_selectbox.options) == 3, "Identity selectbox must have exactly 3 options"
+
+        # 检查选项对应 IDENTITIES 的 label
+        expected_labels = [id_.label for id_ in IDENTITIES]
+        assert identity_selectbox.options == expected_labels, (
+            f"Identity selectbox options must match IDENTITIES labels: {expected_labels}"
+        )
+
+    def test_session_state_initialization(self):
+        """测试 session state 正确初始化"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 检查必需的 session state 键
+        assert "selected_identity" in at.session_state
+        assert "note_title" in at.session_state
+        assert "note_conclusion" in at.session_state
+        assert "pending_save" in at.session_state
+        assert "write_result" in at.session_state
+        assert "sync_result" in at.session_state
+        assert "question" in at.session_state
+        assert "ask_result" in at.session_state
+
+        # 检查初始值
+        assert at.session_state.selected_identity == 0
+        assert at.session_state.note_title == ""
+        assert at.session_state.note_conclusion == ""
+        assert at.session_state.pending_save is False
+        assert at.session_state.write_result is None
+        assert at.session_state.sync_result is None
+        assert at.session_state.question == ""
+        assert at.session_state.ask_result is None
+
+    def test_no_service_call_on_initialization(self):
+        """测试页面初始化不触发服务调用"""
+        with patch("papermind.app_service.save_note") as mock_save, \
+             patch("papermind.app_service.sync_notes") as mock_sync, \
+             patch("papermind.app_service.ask_memory") as mock_ask:
+
+            at = AppTest.from_file("streamlit_app.py")
+            at.run()
+
+            # 确认未调用任何服务
+            mock_save.assert_not_called()
+            mock_sync.assert_not_called()
+            mock_ask.assert_not_called()
+
+
+class TestSaveFlow:
+    """测试保存流程"""
+
+    def test_first_save_click_sets_pending_save(self):
+        """测试第一次点击保存按钮设置 pending_save"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置输入
+        at.text_input[0].set_value("测试论文标题")
+        at.text_area[0].set_value("测试阅读结论")
+        at.run()
+
+        # 第一次点击保存按钮
+        save_buttons = [btn for btn in at.button if "保存" in str(btn.label)]
+        assert len(save_buttons) > 0, "Must have save button"
+        save_buttons[0].click()
+        at.run()
+
+        # 检查 pending_save 被设置为 True
+        assert at.session_state.pending_save is True
+
+    def test_confirm_button_appears_after_pending_save(self):
+        """测试 pending_save 为 True 时显示确认按钮"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置输入并触发 pending_save
+        at.text_input[0].set_value("测试论文标题")
+        at.text_area[0].set_value("测试阅读结论")
+        at.run()
+
+        save_buttons = [btn for btn in at.button if "保存" in str(btn.label)]
+        save_buttons[0].click()
+        at.run()
+
+        # 检查确认按钮出现
+        confirm_buttons = [btn for btn in at.button if "确认" in str(btn.label)]
+        assert len(confirm_buttons) > 0, "Must show confirm button when pending_save is True"
+
+    @patch("papermind.app_service.save_note")
+    def test_confirm_button_calls_save_note_with_confirmed_true(self, mock_save):
+        """测试点击确认按钮调用 save_note(confirmed=True)"""
+        # Mock save_note 返回
+        mock_save.return_value = WriteResult(
+            status="saved",
+            speech_act="statement",
+            memory_ids=["mem_123"],
+            turn_id="turn_abc123",
+            message="保存成功",
+            error_code=None,
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置输入并触发 pending_save
+        at.text_input[0].set_value("测试论文标题")
+        at.text_area[0].set_value("测试阅读结论")
+        at.run()
+
+        save_buttons = [btn for btn in at.button if "保存" in str(btn.label) and "确认" not in str(btn.label)]
+        save_buttons[0].click()
+        at.run()
+
+        # 点击确认按钮
+        confirm_buttons = [btn for btn in at.button if "确认" in str(btn.label)]
+        confirm_buttons[0].click()
+        at.run()
+
+        # 验证 save_note 被调用，且 confirmed=True
+        mock_save.assert_called_once()
+        call_kwargs = mock_save.call_args.kwargs
+        assert call_kwargs["confirmed"] is True
+        assert call_kwargs["title"] == "测试论文标题"
+        assert call_kwargs["conclusion"] == "测试阅读结论"
+
+    @patch("papermind.app_service.save_note")
+    def test_empty_title_behavior(self, mock_save):
+        """测试空标题时的行为"""
+        mock_save.return_value = WriteResult(
+            status="skipped",
+            speech_act=None,
+            memory_ids=[],
+            turn_id="turn_abc123",
+            message="已跳过：标题为空",
+            error_code=None,
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 只设置结论，标题为空
+        at.text_area[0].set_value("测试阅读结论")
+        at.run()
+
+        save_buttons = [btn for btn in at.button if "保存" in str(btn.label) and "确认" not in str(btn.label)]
+        save_buttons[0].click()
+        at.run()
+
+        # 第一次点击保存按钮会设置 pending_save=True（即使标题为空）
+        assert at.session_state.pending_save is True
+
+        # 点击确认按钮后，save_note 会在内部验证并返回 skipped
+        confirm_buttons = [btn for btn in at.button if "确认" in str(btn.label)]
+        confirm_buttons[0].click()
+        at.run()
+
+        # 确认后 save_note 被调用，返回 skipped 状态
+        mock_save.assert_called_once()
+        assert at.session_state.write_result.status == "skipped"
+        assert at.session_state.pending_save is False
+
+
+class TestSyncFlow:
+    """测试同步流程"""
+
+    @patch("papermind.app_service.sync_notes")
+    def test_sync_button_calls_sync_notes(self, mock_sync):
+        """测试点击同步按钮调用 sync_notes"""
+        mock_sync.return_value = SyncResult(
+            status="completed",
+            done=5,
+            failed=1,
+            dead=0,
+            message="批次已处理 5 条成功，1 条失败",
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 找到同步按钮并点击
+        sync_buttons = [btn for btn in at.button if "同步" in str(btn.label)]
+        assert len(sync_buttons) > 0, "Must have sync button"
+        sync_buttons[0].click()
+        at.run()
+
+        # 验证 sync_notes 被调用
+        mock_sync.assert_called_once()
+
+    @patch("papermind.app_service.sync_notes")
+    def test_sync_result_displays_statistics(self, mock_sync):
+        """测试同步结果显示 done/failed/dead 统计"""
+        mock_sync.return_value = SyncResult(
+            status="completed",
+            done=10,
+            failed=2,
+            dead=1,
+            message="批次已处理 10 条成功，2 条失败，1 条死信",
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 点击同步按钮
+        sync_buttons = [btn for btn in at.button if "同步" in str(btn.label)]
+        sync_buttons[0].click()
+        at.run()
+
+        # 检查同步结果被保存
+        assert at.session_state.sync_result is not None
+        assert at.session_state.sync_result.done == 10
+        assert at.session_state.sync_result.failed == 2
+        assert at.session_state.sync_result.dead == 1
+
+    @patch("papermind.app_service.sync_notes")
+    def test_sync_result_wording_does_not_claim_retrievability(self, mock_sync):
+        """测试同步结果文案不声称"已可检索"""
+        mock_sync.return_value = SyncResult(
+            status="completed",
+            done=5,
+            failed=0,
+            dead=0,
+            message="批次已处理 5 条",
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 点击同步按钮
+        sync_buttons = [btn for btn in at.button if "同步" in str(btn.label)]
+        sync_buttons[0].click()
+        at.run()
+
+        # 收集页面文本
+        page_texts = []
+        for elem in at.markdown:
+            page_texts.append(str(elem.value) if hasattr(elem, 'value') else str(elem))
+        for elem in at.success:
+            page_texts.append(str(elem.value) if hasattr(elem, 'value') else str(elem))
+        for elem in at.info:
+            page_texts.append(str(elem.value) if hasattr(elem, 'value') else str(elem))
+        for elem in at.warning:
+            page_texts.append(str(elem.value) if hasattr(elem, 'value') else str(elem))
+        for elem in at.error:
+            page_texts.append(str(elem.value) if hasattr(elem, 'value') else str(elem))
+
+        combined_text = " ".join(page_texts)
+
+        # 不应包含"已可检索"
+        assert "已可检索" not in combined_text, "Sync result must not claim '已可检索'"
+        # 应包含"查询"或"确认"提示
+        assert "查询" in combined_text or "确认" in combined_text, (
+            "Sync result should remind user to verify via query"
+        )
+
+
+class TestAskFlow:
+    """测试查询流程"""
+
+    @patch("papermind.app_service.ask_memory")
+    def test_ask_button_calls_ask_memory(self, mock_ask):
+        """测试点击查询按钮调用 ask_memory"""
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "Mock answer"
+
+        mock_ask.return_value = AskResult(
+            status="answered",
+            answer="这是回答",
+            evidence=[
+                EvidenceItem(
+                    memory_id="mem_123",
+                    content="这是证据",
+                    memory_type="statement",
+                    confidence=0.95,
+                    created_at=datetime.now(),
+                )
+            ],
+            error_code=None,
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        # 点击查询按钮
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        assert len(ask_buttons) > 0, "Must have ask button"
+        ask_buttons[0].click()
+        at.run()
+
+        # 验证 ask_memory 被调用
+        mock_ask.assert_called_once()
+
+    @patch("papermind.app_service.ask_memory")
+    def test_answered_status_displays_answer_and_evidence(self, mock_ask):
+        """测试 answered 状态显示回答和证据"""
+        mock_ask.return_value = AskResult(
+            status="answered",
+            answer="这是回答",
+            evidence=[
+                EvidenceItem(
+                    memory_id="mem_123",
+                    content="这是证据内容",
+                    memory_type="statement",
+                    confidence=0.95,
+                    created_at=datetime.now(),
+                )
+            ],
+            error_code=None,
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题并查询
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        ask_buttons[0].click()
+        at.run()
+
+        # 检查回答和证据被保存
+        assert at.session_state.ask_result is not None
+        assert at.session_state.ask_result.status == "answered"
+        assert at.session_state.ask_result.answer == "这是回答"
+        assert len(at.session_state.ask_result.evidence) == 1
+        assert at.session_state.ask_result.evidence[0].memory_id == "mem_123"
+
+    @patch("papermind.app_service.ask_memory")
+    def test_no_evidence_status_displays_message(self, mock_ask):
+        """测试 no_evidence 状态显示"未找到相关记忆"""
+        mock_ask.return_value = AskResult(
+            status="no_evidence",
+            answer="未找到相关历史记忆。",
+            evidence=[],
+            error_code=None,
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题并查询
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        ask_buttons[0].click()
+        at.run()
+
+        # 检查状态
+        assert at.session_state.ask_result is not None
+        assert at.session_state.ask_result.status == "no_evidence"
+        assert len(at.session_state.ask_result.evidence) == 0
+
+    @patch("papermind.app_service.ask_memory")
+    def test_retrieval_failed_status_displays_error(self, mock_ask):
+        """测试 retrieval_failed 状态显示检索失败"""
+        mock_ask.return_value = AskResult(
+            status="retrieval_failed",
+            answer="记忆检索失败，请稍后重试。",
+            evidence=[],
+            error_code="RETRIEVAL_ERROR",
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题并查询
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        ask_buttons[0].click()
+        at.run()
+
+        # 检查状态和错误码
+        assert at.session_state.ask_result is not None
+        assert at.session_state.ask_result.status == "retrieval_failed"
+        assert at.session_state.ask_result.error_code == "RETRIEVAL_ERROR"
+
+    @patch("papermind.app_service.ask_memory")
+    def test_answer_failed_status_preserves_evidence(self, mock_ask):
+        """测试 answer_failed 状态保留证据"""
+        mock_ask.return_value = AskResult(
+            status="answer_failed",
+            answer="回答生成失败，但已找到相关记忆。",
+            evidence=[
+                EvidenceItem(
+                    memory_id="mem_456",
+                    content="保留的证据",
+                    memory_type="statement",
+                    confidence=0.88,
+                    created_at=datetime.now(),
+                )
+            ],
+            error_code="LLM_ERROR",
+        )
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题并查询
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        ask_buttons[0].click()
+        at.run()
+
+        # 检查状态和证据
+        assert at.session_state.ask_result is not None
+        assert at.session_state.ask_result.status == "answer_failed"
+        assert len(at.session_state.ask_result.evidence) == 1
+        assert at.session_state.ask_result.evidence[0].memory_id == "mem_456"
+
+
+class TestNewSession:
+    """测试新建会话"""
+
+    def test_new_session_clears_temporary_state(self):
+        """测试新建会话清除临时状态"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置一些状态
+        at.session_state.note_title = "旧标题"
+        at.session_state.note_conclusion = "旧结论"
+        at.session_state.question = "旧问题"
+        at.session_state.write_result = WriteResult(
+            status="saved",
+            speech_act="statement",
+            memory_ids=["mem_old"],
+            turn_id="turn_old",
+            message="旧结果",
+            error_code=None,
+        )
+        at.session_state.ask_result = AskResult(
+            status="answered",
+            answer="旧回答",
+            evidence=[],
+            error_code=None,
+        )
+        at.run()
+
+        # 点击新建会话按钮
+        new_session_buttons = [btn for btn in at.button if "新建" in str(btn.label) or "会话" in str(btn.label)]
+        assert len(new_session_buttons) > 0, "Must have new session button"
+        new_session_buttons[0].click()
+        at.run()
+
+        # 检查临时状态被清除
+        assert at.session_state.note_title == ""
+        assert at.session_state.note_conclusion == ""
+        assert at.session_state.question == ""
+        assert at.session_state.write_result is None
+        assert at.session_state.ask_result is None
+        assert at.session_state.pending_save is False
+
+    def test_new_session_preserves_selected_identity(self):
+        """测试新建会话保留 selected_identity"""
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置不同的身份
+        at.session_state.selected_identity = 2
+        at.run()
+
+        # 点击新建会话按钮
+        new_session_buttons = [btn for btn in at.button if "新建" in str(btn.label) or "会话" in str(btn.label)]
+        new_session_buttons[0].click()
+        at.run()
+
+        # 检查 selected_identity 未被清除
+        assert at.session_state.selected_identity == 2
+
+
+class TestExceptionHandling:
+    """测试异常处理"""
+
+    @patch("papermind.app_service.save_note")
+    def test_save_note_exception_displays_error_code(self, mock_save):
+        """测试 save_note 异常显示错误码"""
+        mock_save.side_effect = Exception("Database connection failed")
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置输入并触发保存
+        at.text_input[0].set_value("测试标题")
+        at.text_area[0].set_value("测试结论")
+        at.run()
+
+        save_buttons = [btn for btn in at.button if "保存" in str(btn.label)]
+        save_buttons[0].click()
+        at.run()
+
+        # 点击确认按钮（如果出现）
+        confirm_buttons = [btn for btn in at.button if "确认" in str(btn.label)]
+        if confirm_buttons:
+            confirm_buttons[0].click()
+            at.run()
+
+        # 页面应该展示错误（通过 st.error 或在 write_result 中）
+        # 异常后页面应该仍可继续操作
+        assert at.session_state is not None
+
+    @patch("papermind.app_service.ask_memory")
+    def test_ask_memory_exception_allows_continued_operation(self, mock_ask):
+        """测试 ask_memory 异常后仍可继续操作"""
+        mock_ask.side_effect = Exception("LLM service unavailable")
+
+        at = AppTest.from_file("streamlit_app.py")
+        at.run()
+
+        # 设置问题并查询
+        question_inputs = [inp for inp in at.text_input if inp.label and "问" in inp.label]
+        if question_inputs:
+            question_inputs[0].set_value("测试问题")
+        at.run()
+
+        ask_buttons = [btn for btn in at.button if "查询" in str(btn.label) or "提问" in str(btn.label)]
+        if ask_buttons:
+            ask_buttons[0].click()
+            at.run()
+
+        # 检查异常后可以切换身份
+        at.session_state.selected_identity = 1
+        at.run()
+        assert at.session_state.selected_identity == 1

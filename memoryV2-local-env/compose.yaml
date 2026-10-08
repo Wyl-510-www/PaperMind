@@ -1,0 +1,33 @@
+name: memoryv2-local
+
+services:
+  mysql:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 设置独立的 MySQL root 密码}
+      MYSQL_DATABASE: memory_v2
+      MYSQL_USER: memoryv2
+      MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD:?请在 .env 设置独立的 MySQL 应用密码}
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", 'MYSQL_PWD="$${MYSQL_ROOT_PASSWORD}" mysqladmin ping -h 127.0.0.1 -u root --silent']
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.2
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8701:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+volumes:
+  mysql_data:
+  qdrant_data:

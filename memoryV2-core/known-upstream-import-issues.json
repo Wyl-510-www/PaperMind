@@ -1,0 +1,110 @@
+[
+  {
+    "file": "server/memory_v2/guard/blocked_guard.py",
+    "line": 98,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/guard/critical_guard.py",
+    "line": 256,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/guard/policy_guard.py",
+    "line": 219,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/retrieve/evidence_assembler.py",
+    "line": 83,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/retrieve/evidence_assembler.py",
+    "line": 165,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/retrieve/evidence_assembler.py",
+    "line": 200,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/retrieve/id_chain.py",
+    "line": 121,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.models"
+  },
+  {
+    "file": "server/memory_v2/store/event_manager.py",
+    "line": 77,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.EventRecord"
+  },
+  {
+    "file": "server/memory_v2/store/event_manager.py",
+    "line": 78,
+    "kind": "missing_module",
+    "target": "server.memory_v2.write.id_gen"
+  },
+  {
+    "file": "server/memory_v2/store/event_manager.py",
+    "line": 126,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.EventRecord"
+  },
+  {
+    "file": "server/memory_v2/store/event_manager.py",
+    "line": 196,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.EventRecord"
+  },
+  {
+    "file": "server/memory_v2/store/mutation_store.py",
+    "line": 80,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.OutboxEvent"
+  },
+  {
+    "file": "server/memory_v2/store/mutation_store.py",
+    "line": 81,
+    "kind": "missing_module",
+    "target": "server.memory_v2.write.id_gen"
+  },
+  {
+    "file": "server/memory_v2/store/mutation_store.py",
+    "line": 192,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.OutboxEvent"
+  },
+  {
+    "file": "server/memory_v2/store/mutation_store.py",
+    "line": 193,
+    "kind": "missing_module",
+    "target": "server.memory_v2.write.id_gen"
+  },
+  {
+    "file": "server/memory_v2/trace_exporter.py",
+    "line": 17,
+    "kind": "missing_export",
+    "target": "server.memory_v2.models.Claim"
+  },
+  {
+    "file": "server/memory_v2/trace_exporter.py",
+    "line": 18,
+    "kind": "missing_export",
+    "target": "server.memory_v2.store.entity_store.EntityRecord"
+  },
+  {
+    "file": "server/memory_v2/write/router.py",
+    "line": 394,
+    "kind": "missing_module",
+    "target": "server.memory_v2.store.active_fact"
+  }
+]

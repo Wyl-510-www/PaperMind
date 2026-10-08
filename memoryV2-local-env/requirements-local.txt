@@ -1,0 +1,4 @@
+# coding: utf-8
+-r ../memoryV2-core/requirements-dev.txt
+# MySQL 8.4 默认认证在无 TLS 的本机首次连接时需要 RSA 支持。
+PyMySQL[rsa]>=1,<2
