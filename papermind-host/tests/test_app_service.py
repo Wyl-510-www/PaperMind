@@ -2,6 +2,7 @@
 测试业务服务层契约的正确性
 """
 
+import asyncio
 import pytest
 from unittest.mock import AsyncMock, patch
 from papermind.app_service import (
@@ -633,3 +634,424 @@ class TestSyncNotes:
             assert result.done == 0
             assert result.failed == 5
             assert result.dead == 2
+
+
+class TestRetrieveStructuredEvidence:
+    """测试结构化证据检索"""
+
+    @pytest.mark.asyncio
+    async def test_empty_result_returns_empty_list(self):
+        """测试空结果返回空列表"""
+        from papermind.memory_retrieval import retrieve_structured_evidence
+        from unittest.mock import MagicMock
+
+        identity = IDENTITIES[0]
+
+        # Mock get_config 和 _call_memory_v2_retrieval
+        with patch("papermind.memory_retrieval.get_config") as mock_config, \
+             patch("papermind.memory_retrieval._call_memory_v2_retrieval", new_callable=AsyncMock) as mock_retrieve:
+
+            mock_config.return_value = MagicMock(memory_retrieval_timeout=1.0)
+            mock_retrieve.return_value = {
+                "query": "test query",
+                "items": [],
+                "generated_at": datetime.now(),
+            }
+
+            evidence_list = await retrieve_structured_evidence(
+                query="test query",
+                tenant_id=identity.tenant_id,
+                user_id=identity.user_id,
+                limit=5,
+            )
+
+            assert evidence_list == []
+            mock_retrieve.assert_called_once_with(
+                query="test query",
+                tenant_id=identity.tenant_id,
+                user_id=identity.user_id,
+                limit=5,
+            )
+
+    @pytest.mark.asyncio
+    async def test_successful_retrieval_returns_evidence_items(self):
+        """测试成功检索返回 EvidenceItem 列表"""
+        from papermind.memory_retrieval import retrieve_structured_evidence
+        from unittest.mock import MagicMock
+
+        identity = IDENTITIES[0]
+        now = datetime.now()
+
+        # Mock get_config 和 _call_memory_v2_retrieval
+        with patch("papermind.memory_retrieval.get_config") as mock_config, \
+             patch("papermind.memory_retrieval._call_memory_v2_retrieval", new_callable=AsyncMock) as mock_retrieve:
+
+            mock_config.return_value = MagicMock(memory_retrieval_timeout=1.0)
+            mock_retrieve.return_value = {
+                "query": "test query",
+                "items": [
+                    {
+                        "memory_id": "mem-1",
+                        "text": "我的研究方向是计算机视觉",
+                        "confidence": 0.95,
+                        "memory_type": "semantic",
+                        "created_at": now,
+                    },
+                    {
+                        "memory_id": "mem-2",
+                        "text": "我喜欢深度学习",
+                        "confidence": 0.88,
+                        "memory_type": "semantic",
+                        "created_at": None,
+                    },
+                ],
+                "generated_at": now,
+            }
+
+            evidence_list = await retrieve_structured_evidence(
+                query="test query",
+                tenant_id=identity.tenant_id,
+                user_id=identity.user_id,
+                limit=5,
+            )
+
+            assert len(evidence_list) == 2
+
+            # 验证第一个 EvidenceItem
+            assert evidence_list[0].memory_id == "mem-1"
+            assert evidence_list[0].content == "我的研究方向是计算机视觉"
+            assert evidence_list[0].confidence == 0.95
+            assert evidence_list[0].memory_type == "semantic"
+            assert evidence_list[0].created_at == now
+
+            # 验证第二个 EvidenceItem
+            assert evidence_list[1].memory_id == "mem-2"
+            assert evidence_list[1].content == "我喜欢深度学习"
+            assert evidence_list[1].confidence == 0.88
+            assert evidence_list[1].memory_type == "semantic"
+            assert evidence_list[1].created_at is None
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises_exception(self):
+        """测试超时抛出异常"""
+        from papermind.memory_retrieval import retrieve_structured_evidence
+        from unittest.mock import MagicMock
+
+        identity = IDENTITIES[0]
+
+        # Mock get_config (短超时)
+        with patch("papermind.memory_retrieval.get_config") as mock_config, \
+             patch("papermind.memory_retrieval._call_memory_v2_retrieval", new_callable=AsyncMock) as mock_retrieve:
+
+            mock_config.return_value = MagicMock(memory_retrieval_timeout=0.01)
+
+            # 模拟长时间运行
+            async def long_running(*args, **kwargs):
+                await asyncio.sleep(10)
+            mock_retrieve.side_effect = long_running
+
+            with pytest.raises(asyncio.TimeoutError):
+                await retrieve_structured_evidence(
+                    query="test query",
+                    tenant_id=identity.tenant_id,
+                    user_id=identity.user_id,
+                    limit=5,
+                )
+
+    @pytest.mark.asyncio
+    async def test_retrieval_failure_raises_exception(self):
+        """测试检索失败抛出异常"""
+        from papermind.memory_retrieval import retrieve_structured_evidence
+        from unittest.mock import MagicMock
+
+        identity = IDENTITIES[0]
+
+        # Mock get_config 和 _call_memory_v2_retrieval (抛出异常)
+        with patch("papermind.memory_retrieval.get_config") as mock_config, \
+             patch("papermind.memory_retrieval._call_memory_v2_retrieval", new_callable=AsyncMock) as mock_retrieve:
+
+            mock_config.return_value = MagicMock(memory_retrieval_timeout=1.0)
+            mock_retrieve.side_effect = RuntimeError("Memory V2 unavailable")
+
+            with pytest.raises(RuntimeError, match="Memory V2 unavailable"):
+                await retrieve_structured_evidence(
+                    query="test query",
+                    tenant_id=identity.tenant_id,
+                    user_id=identity.user_id,
+                    limit=5,
+                )
+
+    @pytest.mark.asyncio
+    async def test_tenant_user_propagation(self):
+        """测试 tenant_id 和 user_id 正确透传"""
+        from papermind.memory_retrieval import retrieve_structured_evidence
+        from unittest.mock import MagicMock
+
+        # Mock get_config 和 _call_memory_v2_retrieval
+        with patch("papermind.memory_retrieval.get_config") as mock_config, \
+             patch("papermind.memory_retrieval._call_memory_v2_retrieval", new_callable=AsyncMock) as mock_retrieve:
+
+            mock_config.return_value = MagicMock(memory_retrieval_timeout=1.0)
+            mock_retrieve.return_value = {
+                "query": "test",
+                "items": [],
+                "generated_at": datetime.now(),
+            }
+
+            await retrieve_structured_evidence(
+                query="my query",
+                tenant_id="tenant_custom",
+                user_id="user_custom",
+                limit=10,
+            )
+
+            mock_retrieve.assert_called_once_with(
+                query="my query",
+                tenant_id="tenant_custom",
+                user_id="user_custom",
+                limit=10,
+            )
+
+
+class TestAskMemory:
+    """测试 ask_memory 函数"""
+
+    @pytest.mark.asyncio
+    async def test_with_evidence_calls_llm_returns_answered(self):
+        """测试有证据时调用 LLM 并返回 answered 状态"""
+        from papermind.app_service import ask_memory
+
+        identity = IDENTITIES[0]
+        now = datetime.now()
+
+        # Mock retrieve_structured_evidence 返回证据
+        mock_evidence = [
+            EvidenceItem(
+                memory_id="mem-1",
+                content="我的研究方向是计算机视觉",
+                memory_type="semantic",
+                confidence=0.95,
+                created_at=now,
+            ),
+        ]
+
+        # Mock LLM client
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "根据您的历史记忆，您的研究方向是计算机视觉。"
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = mock_evidence
+
+            result = await ask_memory(
+                identity=identity,
+                question="我的研究方向是什么？",
+                llm_client=mock_llm,
+            )
+
+            # 验证检索被调用
+            mock_retrieve.assert_called_once_with(
+                query="我的研究方向是什么？",
+                tenant_id=identity.tenant_id,
+                user_id=identity.user_id,
+                limit=5,
+            )
+
+            # 验证 LLM 被调用
+            mock_llm.generate.assert_called_once()
+            prompt = mock_llm.generate.call_args[0][0]
+            assert "我的研究方向是计算机视觉" in prompt
+            assert "我的研究方向是什么？" in prompt
+
+            # 验证结果
+            assert result.status == "answered"
+            assert result.answer == "根据您的历史记忆，您的研究方向是计算机视觉。"
+            assert result.evidence == mock_evidence
+            assert result.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_no_evidence_does_not_call_llm_returns_no_evidence(self):
+        """测试无证据时不调用 LLM 并返回 no_evidence 状态"""
+        from papermind.app_service import ask_memory
+
+        identity = IDENTITIES[0]
+
+        # Mock retrieve_structured_evidence 返回空列表
+        mock_llm = AsyncMock()
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = []
+
+            result = await ask_memory(
+                identity=identity,
+                question="我的兴趣爱好是什么？",
+                llm_client=mock_llm,
+            )
+
+            # 验证检索被调用
+            mock_retrieve.assert_called_once()
+
+            # 验证 LLM 未被调用
+            mock_llm.generate.assert_not_called()
+
+            # 验证结果
+            assert result.status == "no_evidence"
+            assert "未找到相关历史记忆" in result.answer
+            assert result.evidence == []
+            assert result.error_code is None
+
+    @pytest.mark.asyncio
+    async def test_retrieval_failed_does_not_call_llm_returns_retrieval_failed(self):
+        """测试检索失败时不调用 LLM 并返回 retrieval_failed 状态"""
+        from papermind.app_service import ask_memory
+
+        identity = IDENTITIES[0]
+
+        # Mock retrieve_structured_evidence 抛出异常
+        mock_llm = AsyncMock()
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.side_effect = RuntimeError("Memory V2 unavailable")
+
+            result = await ask_memory(
+                identity=identity,
+                question="我的研究方向是什么？",
+                llm_client=mock_llm,
+            )
+
+            # 验证检索被调用
+            mock_retrieve.assert_called_once()
+
+            # 验证 LLM 未被调用
+            mock_llm.generate.assert_not_called()
+
+            # 验证结果
+            assert result.status == "retrieval_failed"
+            assert "检索失败" in result.answer or "记忆检索" in result.answer
+            assert result.evidence == []
+            assert result.error_code is not None
+
+    @pytest.mark.asyncio
+    async def test_llm_failure_returns_answer_failed_but_keeps_evidence(self):
+        """测试检索成功但 LLM 失败时返回 answer_failed 并保留证据"""
+        from papermind.app_service import ask_memory
+
+        identity = IDENTITIES[0]
+        now = datetime.now()
+
+        # Mock retrieve_structured_evidence 返回证据
+        mock_evidence = [
+            EvidenceItem(
+                memory_id="mem-1",
+                content="我的研究方向是计算机视觉",
+                memory_type="semantic",
+                confidence=0.95,
+                created_at=now,
+            ),
+        ]
+
+        # Mock LLM client 抛出异常
+        mock_llm = AsyncMock()
+        mock_llm.generate.side_effect = RuntimeError("LLM API error")
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = mock_evidence
+
+            result = await ask_memory(
+                identity=identity,
+                question="我的研究方向是什么？",
+                llm_client=mock_llm,
+            )
+
+            # 验证检索被调用
+            mock_retrieve.assert_called_once()
+
+            # 验证 LLM 被调用
+            mock_llm.generate.assert_called_once()
+
+            # 验证结果
+            assert result.status == "answer_failed"
+            assert "回答生成失败" in result.answer or "生成失败" in result.answer
+            assert result.evidence == mock_evidence  # 保留证据
+            assert result.error_code is not None
+
+    @pytest.mark.asyncio
+    async def test_identity_propagation(self):
+        """测试身份正确透传到检索"""
+        from papermind.app_service import ask_memory
+
+        identity = Identity(
+            tenant_id="tenant_custom",
+            user_id="user_custom",
+            label="Custom",
+        )
+
+        # Mock retrieve_structured_evidence
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "答案"
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = [
+                EvidenceItem(
+                    memory_id="mem-1",
+                    content="test",
+                    memory_type="semantic",
+                    confidence=0.9,
+                    created_at=None,
+                )
+            ]
+
+            await ask_memory(
+                identity=identity,
+                question="测试问题",
+                llm_client=mock_llm,
+            )
+
+            # 验证身份透传
+            mock_retrieve.assert_called_once_with(
+                query="测试问题",
+                tenant_id="tenant_custom",
+                user_id="user_custom",
+                limit=5,
+            )
+
+    @pytest.mark.asyncio
+    async def test_system_prompt_requires_evidence_only_answers(self):
+        """测试系统提示要求只基于证据回答"""
+        from papermind.app_service import ask_memory
+
+        identity = IDENTITIES[0]
+
+        # Mock retrieve_structured_evidence 返回证据
+        mock_evidence = [
+            EvidenceItem(
+                memory_id="mem-1",
+                content="我喜欢打篮球",
+                memory_type="semantic",
+                confidence=0.9,
+                created_at=None,
+            ),
+        ]
+
+        # Mock LLM client
+        mock_llm = AsyncMock()
+        mock_llm.generate.return_value = "答案"
+
+        with patch("papermind.memory_retrieval.retrieve_structured_evidence", new_callable=AsyncMock) as mock_retrieve:
+            mock_retrieve.return_value = mock_evidence
+
+            await ask_memory(
+                identity=identity,
+                question="我的爱好是什么？",
+                llm_client=mock_llm,
+            )
+
+            # 获取传给 LLM 的 prompt
+            prompt = mock_llm.generate.call_args[0][0]
+
+            # 验证系统提示包含关键约束
+            assert "仅根据" in prompt or "只使用" in prompt or "只根据" in prompt
+            assert "历史记忆" in prompt
+            assert "我喜欢打篮球" in prompt  # 证据内容
+            assert "我的爱好是什么？" in prompt  # 用户问题
+            # 验证禁止使用模型知识的约束
+            assert "不要使用" in prompt or "不使用" in prompt or "禁止" in prompt

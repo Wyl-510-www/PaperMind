@@ -6,6 +6,7 @@
 2. 实现租户和用户隔离
 3. 格式化检索结果为 prompt 注入文本
 4. 提供错误处理和降级策略
+5. 提供结构化证据检索（返回 EvidenceItem 列表）
 """
 
 from __future__ import annotations
@@ -18,6 +19,93 @@ from typing import Optional
 from papermind.config import get_config
 
 logger = logging.getLogger(__name__)
+
+
+# 导入 app_service 中的 EvidenceItem（避免循环导入，使用 TYPE_CHECKING）
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from papermind.app_service import EvidenceItem
+
+
+async def retrieve_structured_evidence(
+    query: str,
+    tenant_id: str,
+    user_id: str,
+    limit: int = 5,
+) -> list[EvidenceItem]:
+    """检索用户长期记忆并返回结构化证据列表。
+
+    此函数提供结构化检索接口，返回 EvidenceItem 列表供业务层使用。
+    与 retrieve_memory_context 不同，此函数不格式化为字符串，而是保留结构化数据。
+
+    Args:
+        query: 用户查询文本，用于语义检索
+        tenant_id: 租户 ID，用于隔离不同租户的记忆
+        user_id: 用户 ID，用于隔离同一租户下不同用户的记忆
+        limit: 返回的最大证据数量，默认 5 条
+
+    Returns:
+        EvidenceItem 列表，每个 EvidenceItem 包含：
+            - memory_id: 记忆 ID
+            - content: 记忆内容文本
+            - memory_type: 记忆类型（如 semantic）
+            - confidence: 置信度分数
+            - created_at: 创建时间（可能为 None）
+
+        如果未检索到记忆，返回空列表。
+
+    Raises:
+        asyncio.TimeoutError: 检索超时
+        RuntimeError: Memory V2 检索失败
+        Exception: 其他检索错误
+
+    Note:
+        - 此函数抛出异常而不是返回降级提示，让调用者决定如何处理错误
+        - 调用者应区分空列表（无证据）和异常（检索失败）
+
+    Example:
+        >>> evidence_list = await retrieve_structured_evidence(
+        ...     query="我的研究方向是什么",
+        ...     tenant_id="tenant_default",
+        ...     user_id="alice",
+        ...     limit=5
+        ... )
+        >>> if evidence_list:
+        ...     print(f"找到 {len(evidence_list)} 条证据")
+        ...     print(f"第一条：{evidence_list[0].content}")
+    """
+    # 延迟导入避免循环依赖
+    from papermind.app_service import EvidenceItem
+
+    config = get_config()
+
+    # 设置超时控制（抛出异常，不捕获）
+    evidence_pack = await asyncio.wait_for(
+        _call_memory_v2_retrieval(
+            query=query,
+            tenant_id=tenant_id,
+            user_id=user_id,
+            limit=limit,
+        ),
+        timeout=config.memory_retrieval_timeout,
+    )
+
+    # 转换为 EvidenceItem 列表
+    if not evidence_pack or not evidence_pack.get("items"):
+        return []
+
+    evidence_items = []
+    for item in evidence_pack["items"]:
+        evidence_item = EvidenceItem(
+            memory_id=item.get("memory_id", "unknown"),
+            content=item.get("text", ""),  # 注意：evidence_pack 中字段名是 "text"
+            memory_type=item.get("memory_type", "unknown"),
+            confidence=item.get("confidence", 0.0),
+            created_at=item.get("created_at"),
+        )
+        evidence_items.append(evidence_item)
+
+    return evidence_items
 
 
 async def retrieve_memory_context(
@@ -130,10 +218,50 @@ async def _call_memory_v2_retrieval(
         # 导入 Memory V2 核心模块
         from server.memory_v2.retrieve.evidence_pipeline import EvidencePipeline
         from server.memory_v2.retrieve.index_v2 import IndexV2
-        from server.memory_v2.retrieve.reranker import Reranker
+        from server.memory_v2.retrieve.embedder import RealEmbedder
         from server.database.database_bailian_config import Config as DBConfig
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
+        from typing import Any
+
+        # 创建一个带 embedder 的 IndexV2 包装器
+        class IndexV2WithEmbedder:
+            """IndexV2 包装器，自动处理 query embedding。"""
+            def __init__(self, index: IndexV2, embedder: RealEmbedder):
+                self.index = index
+                self.embedder = embedder
+
+            def search(
+                self,
+                memory_type: str,
+                query: str,
+                top_k: int,
+                query_vector: list[float] | None = None,
+                tenant_id: str | None = None,
+                user_id: str | None = None,
+            ) -> list[dict[str, Any]]:
+                """自动生成 query_vector 然后调用 IndexV2.search。"""
+                if query_vector is None:
+                    query_vector = self.embedder.embed(query)
+                return self.index.search(
+                    memory_type=memory_type,
+                    query=query,
+                    top_k=top_k,
+                    query_vector=query_vector,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                )
+
+        # 创建一个空操作的 Reranker（Phase 1.3 不需要 reranking）
+        class NoopReranker:
+            """空操作 Reranker，直接返回原始候选，不做重排。"""
+            def rerank(self, query: str, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+                """不做任何重排，直接返回原始候选。"""
+                # 为每个候选添加 rerank_score（使用原始 score）
+                for cand in candidates:
+                    if "rerank_score" not in cand:
+                        cand["rerank_score"] = cand.get("score", 0.0)
+                return candidates
 
         # 初始化数据库连接
         engine = create_engine(DBConfig.Database_url, pool_pre_ping=True)
@@ -142,8 +270,11 @@ async def _call_memory_v2_retrieval(
 
         try:
             # 初始化 Memory V2 组件
-            index = IndexV2(embedding_dim=1536)  # text-embedding-v4 维度
-            reranker = Reranker()
+            base_index = IndexV2(embedding_dim=1536)  # text-embedding-v4 维度
+            embedder = RealEmbedder()  # 创建 embedder
+            index = IndexV2WithEmbedder(base_index, embedder)  # 包装后的 index
+            # Phase 1.3: 使用 NoopReranker（不做重排）
+            reranker = NoopReranker()
 
             # 创建 EvidencePipeline
             pipeline = EvidencePipeline(
@@ -167,7 +298,7 @@ async def _call_memory_v2_retrieval(
                 "items": [
                     {
                         "memory_id": item.memory_id,
-                        "text": item.text_zh,
+                        "text": item.content,  # EvidenceItem 字段是 content，不是 text_zh
                         "confidence": item.final_score,
                         "memory_type": item.memory_type,
                         "created_at": getattr(item, "created_at", None),

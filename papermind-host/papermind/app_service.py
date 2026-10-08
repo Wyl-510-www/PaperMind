@@ -172,5 +172,120 @@ async def ask_memory(
     *,
     llm_client: LLMClient,
 ) -> AskResult:
-    """查询 Memory V2 并生成答案"""
-    raise NotImplementedError("ask_memory will be implemented in Task Group 3")
+    """查询 Memory V2 并生成答案。
+
+    基于用户身份检索历史记忆，并使用 LLM 生成基于证据的回答。
+    严格区分四种状态：有证据且回答成功、无证据、检索失败、回答失败。
+
+    Args:
+        identity: 用户身份标识（tenant_id, user_id）
+        question: 用户问题
+        llm_client: LLM 客户端，用于生成回答
+
+    Returns:
+        AskResult: 查询结果，包含四种状态之一
+            - answered: 检索到证据，LLM 成功生成回答
+            - no_evidence: 未检索到相关记忆（不调用 LLM）
+            - retrieval_failed: 检索失败或超时（不调用 LLM）
+            - answer_failed: 检索成功但 LLM 生成失败（保留证据）
+
+    Note:
+        - 只有检索到证据时才调用 LLM
+        - 检索失败不伪装成无证据
+        - LLM 失败时保留已检索到的证据
+        - 系统提示要求只基于证据回答，禁止使用模型知识补充用户经历
+    """
+    import asyncio
+    import logging
+    from papermind.memory_retrieval import retrieve_structured_evidence
+
+    logger = logging.getLogger(__name__)
+
+    # 步骤 1: 调用结构化检索
+    try:
+        evidence_list = await retrieve_structured_evidence(
+            query=question,
+            tenant_id=identity.tenant_id,
+            user_id=identity.user_id,
+            limit=5,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "Memory retrieval timeout for ask_memory: tenant=%s, user=%s, question=%s",
+            identity.tenant_id,
+            identity.user_id,
+            question[:50],
+        )
+        return AskResult(
+            status="retrieval_failed",
+            answer="记忆检索超时，请稍后重试。",
+            evidence=[],
+            error_code="RETRIEVAL_TIMEOUT",
+        )
+    except Exception as e:
+        logger.error(
+            "Memory retrieval failed for ask_memory: tenant=%s, user=%s, question=%s, error=%s",
+            identity.tenant_id,
+            identity.user_id,
+            question[:50],
+            str(e),
+            exc_info=True,
+        )
+        return AskResult(
+            status="retrieval_failed",
+            answer="记忆检索失败，请稍后重试。",
+            evidence=[],
+            error_code="RETRIEVAL_ERROR",
+        )
+
+    # 步骤 2: 无证据 → 返回 no_evidence，不调用 LLM
+    if not evidence_list:
+        return AskResult(
+            status="no_evidence",
+            answer="未找到相关历史记忆。",
+            evidence=[],
+            error_code=None,
+        )
+
+    # 步骤 3: 有证据 → 构建 prompt
+    evidence_text = "\n\n".join(
+        f"{idx}. {item.content}"
+        for idx, item in enumerate(evidence_list, start=1)
+    )
+
+    prompt = f"""你是用户的个人记忆助手。请仅根据以下历史记忆回答用户问题。
+
+历史记忆：
+{evidence_text}
+
+重要约束：
+1. 只使用上述历史记忆中的信息
+2. 不要使用常识或模型知识补充用户的经历
+3. 如果历史记忆不足以回答，明确说明
+
+用户问题：{question}"""
+
+    # 步骤 4: 调用 LLM
+    try:
+        answer = await llm_client.generate(prompt)
+        return AskResult(
+            status="answered",
+            answer=answer,
+            evidence=evidence_list,
+            error_code=None,
+        )
+    except Exception as e:
+        logger.error(
+            "LLM generation failed for ask_memory: tenant=%s, user=%s, question=%s, error=%s",
+            identity.tenant_id,
+            identity.user_id,
+            question[:50],
+            str(e),
+            exc_info=True,
+        )
+        return AskResult(
+            status="answer_failed",
+            answer="回答生成失败，但已找到相关记忆。",
+            evidence=evidence_list,  # 保留证据
+            error_code="LLM_ERROR",
+        )

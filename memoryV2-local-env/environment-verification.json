@@ -1,0 +1,36 @@
+{
+  "python": "3.12.7",
+  "python_executable": "E:\\Python\\python.exe",
+  "mysql_version": "8.4.11",
+  "mysql_connected": true,
+  "mysql_async_connected": true,
+  "memory_tables_initialized": false,
+  "database_tables": [
+    "entities",
+    "entity_relations",
+    "memory_v2_active_fact",
+    "memory_v2_event",
+    "memory_v2_nickname",
+    "memory_v2_outbox",
+    "memory_v2_record",
+    "user_critical_fact",
+    "user_critical_fact_active",
+    "user_preference_active",
+    "user_preference_fact"
+  ],
+  "qdrant_health": 200,
+  "vector_upsert_and_search": true,
+  "temporary_vector_collection_removed": true,
+  "embedding_dimension": 1536,
+  "configured_collection": null,
+  "core_switches_enabled": true,
+  "model_api_calls_tested": false,
+  "packages": {
+    "SQLAlchemy": "2.0.48",
+    "PyMySQL": "1.1.2",
+    "aiomysql": "0.3.2",
+    "qdrant-client": "1.19.0",
+    "openai": "2.36.0",
+    "pydantic": "2.13.3"
+  }
+}

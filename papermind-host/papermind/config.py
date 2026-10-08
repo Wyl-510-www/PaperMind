@@ -22,8 +22,9 @@ class Config(BaseSettings):
     """
 
     bailian_api_key: str = Field(
-        ...,
+        default="",
         description="DashScope API Key from https://dashscope.console.aliyun.com/apiKey",
+        alias="dashscope_api_key",
     )
 
     llm_model: str = Field(
@@ -62,6 +63,7 @@ class Config(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     @field_validator("bailian_api_key")

@@ -1,0 +1,8 @@
+{
+  "mysql:8.4": [
+    "mysql@sha256:6ea90827b1100f8f2ae306a539f86d2c264a26ed435a2a9f75551dd5c3aeb242"
+  ],
+  "qdrant/qdrant:v1.19.2": [
+    "qdrant/qdrant@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad"
+  ]
+}
