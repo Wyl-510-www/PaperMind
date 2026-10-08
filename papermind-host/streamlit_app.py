@@ -22,6 +22,7 @@ from papermind.app_service import (
     ask_memory,
 )
 from papermind.pdf_extractor import extract_pdf_text, PDFExtractResult
+from papermind.translator import create_translator, TranslationResult
 
 
 # Mock LLMClient for ask_memory
@@ -39,6 +40,10 @@ if "note_title" not in st.session_state:
     st.session_state.note_title = ""
 if "note_conclusion" not in st.session_state:
     st.session_state.note_conclusion = ""
+if "note_title_input" not in st.session_state:
+    st.session_state.note_title_input = ""
+if "note_conclusion_input" not in st.session_state:
+    st.session_state.note_conclusion_input = ""
 if "pending_save" not in st.session_state:
     st.session_state.pending_save = False
 if "write_result" not in st.session_state:
@@ -51,6 +56,10 @@ if "ask_result" not in st.session_state:
     st.session_state.ask_result = None
 if "pdf_extract_result" not in st.session_state:
     st.session_state.pdf_extract_result = None
+if "pdf_translated_text" not in st.session_state:
+    st.session_state.pdf_translated_text = None
+if "show_translation" not in st.session_state:
+    st.session_state.show_translation = False
 
 
 # ===== 1. 标题与身份选择 =====
@@ -103,18 +112,73 @@ if uploaded_file is not None:
                 if result.success:
                     st.success("✓ PDF 文本提取成功")
 
-                    # 自动填充标题
-                    if result.title:
+                    # 自动填充标题（但不覆盖用户已输入的内容）
+                    if result.title and not st.session_state.note_title:
                         st.session_state.note_title = result.title
 
-                    # 自动填充内容
+                    # 展示完整提取内容
                     if result.text:
-                        st.session_state.note_conclusion = result.text
+                        st.write("**📄 提取的完整内容**")
 
-                    # 展示预览
-                    if result.preview:
-                        with st.expander("📄 提取预览（前 500 字符）"):
-                            st.text(result.preview)
+                        # 显示当前查看的是原文还是译文
+                        if st.session_state.show_translation and st.session_state.pdf_translated_text:
+                            display_text = st.session_state.pdf_translated_text
+                            st.info("当前显示：中文翻译")
+                        else:
+                            display_text = result.text
+                            st.info("当前显示：原文")
+
+                        # 使用可滚动的text_area展示完整内容（不使用key，避免状态冲突）
+                        st.text_area(
+                            "提取内容",
+                            value=display_text,
+                            height=300,
+                            help="可滚动查看完整内容",
+                            disabled=True,
+                        )
+
+                        # 操作按钮
+                        col_btn1, col_btn2, col_btn3 = st.columns(3)
+
+                        with col_btn1:
+                            if st.button("📋 应用到编辑区", type="primary"):
+                                # 应用当前显示的文本（原文或译文）到正确的 session_state key
+                                st.session_state.note_conclusion_input = display_text
+                                st.session_state.note_conclusion = display_text
+                                st.rerun()
+
+                        with col_btn2:
+                            if st.button("🌐 翻译为中文"):
+                                try:
+                                    with st.spinner("正在翻译..."):
+                                        # 创建翻译器（使用真实API）
+                                        translator = create_translator(use_mock=False)
+
+                                        # 翻译文本（限制长度避免API超时）
+                                        text_to_translate = result.text[:5000] if len(result.text) > 5000 else result.text
+                                        translation_result = asyncio.run(
+                                            translator.translate(
+                                                text=text_to_translate,
+                                                target_lang="zh",
+                                                source_lang="auto",
+                                            )
+                                        )
+
+                                        if translation_result.success:
+                                            st.session_state.pdf_translated_text = translation_result.translated_text
+                                            st.session_state.show_translation = True
+                                            st.success("✓ 翻译完成")
+                                            st.rerun()
+                                        else:
+                                            st.error(f"✗ 翻译失败：{translation_result.error_message}")
+                                except Exception as e:
+                                    st.error(f"✗ 翻译过程出错：{str(e)}")
+
+                        with col_btn3:
+                            if st.session_state.show_translation:
+                                if st.button("📄 显示原文"):
+                                    st.session_state.show_translation = False
+                                    st.rerun()
                 else:
                     # 显示错误信息
                     st.error(f"✗ {result.error_message}")
@@ -135,22 +199,25 @@ if uploaded_file is not None:
 
 st.write("**方式 2: 手动输入**")
 
+# 如果有PDF提取的内容，显示提示
+if st.session_state.pdf_extract_result and st.session_state.pdf_extract_result.success:
+    st.info("💡 提示：点击上方「📋 应用到编辑区」后，内容会自动填充到下方输入框")
+
 note_title = st.text_input(
     "论文标题",
-    value=st.session_state.note_title,
     key="note_title_input",
 )
 
 note_conclusion = st.text_area(
-    "阅读结论",
-    value=st.session_state.note_conclusion,
+    "阅读结论（可编辑提取的内容或手动输入）",
     key="note_conclusion_input",
-    height=150,
+    height=200,
+    help="内容会显示在这里，您可以直接编辑",
 )
 
-# 同步输入到 session state
-st.session_state.note_title = note_title
-st.session_state.note_conclusion = note_conclusion
+# 同步输入到 session state（用于保存功能）
+st.session_state.note_title = st.session_state.note_title_input
+st.session_state.note_conclusion = st.session_state.note_conclusion_input
 
 col1, col2 = st.columns([1, 1])
 
