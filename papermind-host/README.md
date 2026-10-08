@@ -18,6 +18,7 @@ PaperMind Phase 2 提供基于 Streamlit 的单页 UI，支持论文阅读笔记
 
 - **三身份隔离**：租户和用户级别的记忆隔离
 - **笔记保存**：论文标题 + 阅读结论写入 Memory V2
+- **PDF 上传**：自动提取 PDF 文本和标题（Phase 2.2 新增）
 - **同步机制**：Outbox 队列批量同步到 Qdrant 索引
 - **记忆问答**：基于历史笔记的语义检索 + LLM 回答
 - **完整测试**：单元测试 + 集成测试 + 真实服务验收
@@ -152,13 +153,27 @@ Streamlit 会自动打开浏览器（默认 http://localhost:8501）。
 
 ### 2. 保存笔记
 
-**输入笔记内容：**
+**方式 1: 上传 PDF 论文（Phase 2.2 新增）**
+
+- 点击"选择 PDF 文件"上传按钮
+- 选择本地 PDF 文件（<10MB）
+- 系统自动提取文本和标题
+- 查看预览（前 500 字符）
+- 可编辑提取的内容后保存
+
+**支持的 PDF 类型：**
+- ✅ 可复制文本的 PDF
+- ❌ 扫描版 PDF（暂不支持 OCR）
+- ❌ 加密 PDF
+
+**方式 2: 手动输入**
+
 - **论文标题**：论文的标题或主题
 - **阅读结论**：你对论文的总结、理解或笔记
 
-**二次确认：**
-- 勾选"确认保存到 Memory V2"复选框
-- 点击"保存笔记"按钮
+**保存流程：**
+- 点击"💾 保存笔记"按钮
+- 点击"✅ 确认保存"进行二次确认
 
 **查看结果：**
 - 显示保存状态（saved/skipped/failed）
@@ -252,13 +267,29 @@ python scripts/verify_phase2_ui.py
 ✅ 验收通过
 ```
 
+## Phase 2.2 新增功能
+
+**PDF 文本提取** ✅
+- 支持上传 PDF 论文并自动提取文本
+- 自动识别论文标题（从元数据或首页）
+- 提取内容预览（前 500 字符）
+- 错误检测（加密、扫描版、损坏文件）
+- 复用现有保存和检索流程
+
+**限制：**
+- 仅支持可复制文本的 PDF（不支持扫描版 OCR）
+- 文件大小限制 10MB
+- 不保存原始 PDF 文件
+- 不实现文档级 RAG（全文不作为独立向量存储）
+
 ## 当前不支持的功能
 
-以下功能不在 Phase 2 P0 范围内：
+以下功能不在 Phase 2 范围内：
 
-- ❌ **PDF 上传和解析** - 当前只支持手动输入笔记
+- ❌ **OCR 识别** - 扫描版 PDF 需要手动输入
+- ❌ **批量 PDF 上传** - 一次只能上传一份 PDF
 - ❌ **论文库管理** - 没有论文列表、分类、标签等功能
-- ❌ **P2 摘要生成** - 不支持自动生成论文摘要
+- ❌ **文档级 RAG** - PDF 全文不作为独立向量存储
 - ❌ **REST API** - 只有 Streamlit UI，没有 HTTP API
 - ❌ **自动后台 worker** - 需要手动点击同步按钮
 - ❌ **正式鉴权系统** - 使用固定的三个身份，没有登录/注册
@@ -590,13 +621,24 @@ papermind-host/
 │   ├── __init__.py
 │   ├── config.py          # 配置管理
 │   ├── llm_client.py      # LLM 客户端
-│   └── session.py         # 会话管理
+│   ├── session.py         # 会话管理
+│   ├── memory_writer.py   # Memory V2 写入模块
+│   ├── memory_retrieval.py # Memory V2 检索模块
+│   ├── outbox_sync.py     # Outbox 同步模块
+│   ├── app_service.py     # Streamlit 业务层
+│   └── pdf_extractor.py   # PDF 文本提取（Phase 2.2）
 ├── tests/                 # 测试代码
 │   ├── test_config.py
 │   ├── test_llm_client.py
-│   └── test_session.py
+│   ├── test_session.py
+│   ├── test_memory_writer.py
+│   ├── test_memory_retrieval.py
+│   └── test_pdf_extractor.py  # PDF 提取测试
+├── scripts/               # 验收脚本
+│   └── verify_phase2_ui.py
 ├── examples/              # 示例代码
 │   └── simple_chat.py
+├── streamlit_app.py       # Streamlit UI 主入口
 ├── .env.example           # 环境变量示例
 ├── pyproject.toml         # 项目配置
 └── README.md
@@ -641,6 +683,19 @@ except LLMAPIError as e:
 3. Memory V2 核心模块已安装
 
 详见 [Memory V2 文档](../memoryV2-core/README.md)。
+
+### Q: PDF 上传失败怎么办？
+
+**常见问题：**
+- **加密 PDF**：使用解密工具移除密码后重试
+- **扫描版 PDF**：当前不支持 OCR，请手动输入内容
+- **文件过大**：压缩 PDF 或手动输入关键内容
+- **损坏文件**：重新下载 PDF 或使用 PDF 修复工具
+
+**技术细节：**
+- PDF 提取使用 PyMuPDF (fitz) 库
+- 仅支持可复制文本的 PDF
+- 提取后自动清理临时文件
 
 ### Q: 如何调试记忆检索问题？
 

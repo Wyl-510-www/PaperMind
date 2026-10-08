@@ -293,6 +293,13 @@ async def save_turn_to_memory(
 
     # Speech Act 分类
     try:
+        # 动态添加 memoryV2-core 路径
+        import sys
+        from pathlib import Path
+        memoryv2_core = Path(__file__).resolve().parent.parent.parent / "memoryV2-core"
+        if str(memoryv2_core) not in sys.path:
+            sys.path.insert(0, str(memoryv2_core))
+
         from server.memory_v2.speech_act import classify_speech_act
         speech_act = classify_speech_act(user_text)
 
