@@ -70,3 +70,13 @@ memoryV2-core.zip
 # Temporary uploads (Phase 2.2)
 tmp/
 papermind-host/tmp/
+
+# Test files and samples
+*.pdf
+papermind-host/test_*.txt
+papermind-host/sample_*.txt
+
+# Documentation and reports (exclude from repo)
+*项目汇报*.md
+*报告*.md
+*REPORT*.md
