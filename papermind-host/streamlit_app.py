@@ -1,14 +1,15 @@
 """
-PaperMind Phase 2 Streamlit 单页应用
+PaperMind Phase 3 Streamlit 单页应用
 
 提供最小可操作页面，用于：
-1. 保存阅读笔记到 Memory V2
+1. 保存阅读笔记到 Memory V2（支持元数据）
 2. 同步笔记到检索索引
-3. 查询历史记忆并生成回答
+3. 查询历史记忆并生成回答（支持标签和时间过滤）
 """
 
 import asyncio
 import tempfile
+from datetime import date
 from pathlib import Path
 import streamlit as st
 from papermind.app_service import (
@@ -23,6 +24,9 @@ from papermind.app_service import (
 )
 from papermind.pdf_extractor import extract_pdf_text, PDFExtractResult
 from papermind.translator import create_translator, TranslationResult
+from papermind.models import NoteMetadata
+from papermind.constants import PREDEFINED_TAGS, NOTE_TYPES, TIME_RANGE_OPTIONS
+from papermind.utils.date_utils import calculate_date_range
 
 
 # Mock LLMClient for ask_memory
@@ -60,6 +64,10 @@ if "pdf_translated_text" not in st.session_state:
     st.session_state.pdf_translated_text = None
 if "show_translation" not in st.session_state:
     st.session_state.show_translation = False
+
+# Phase 3: 元数据相关 session state（仅初始化非 widget 绑定的状态）
+if "note_read_date_default" not in st.session_state:
+    st.session_state.note_read_date_default = date.today()
 
 
 # ===== 1. 标题与身份选择 =====
@@ -204,15 +212,60 @@ if st.session_state.pdf_extract_result and st.session_state.pdf_extract_result.s
     st.info("💡 提示：点击上方「📋 应用到编辑区」后，内容会自动填充到下方输入框")
 
 note_title = st.text_input(
-    "论文标题",
+    "论文标题 *",
     key="note_title_input",
+    placeholder="例如：Attention Is All You Need",
 )
 
 note_conclusion = st.text_area(
-    "阅读结论（可编辑提取的内容或手动输入）",
+    "阅读结论 *（可编辑提取的内容或手动输入）",
     key="note_conclusion_input",
     height=200,
     help="内容会显示在这里，您可以直接编辑",
+    placeholder="输入您的阅读笔记...",
+)
+
+# Phase 3: 元数据输入表单
+st.write("**📋 元数据信息**")
+
+col_meta1, col_meta2 = st.columns(2)
+
+with col_meta1:
+    note_author = st.text_input(
+        "论文作者（选填）",
+        key="note_author",
+        placeholder="例如：Vaswani et al.",
+    )
+
+with col_meta2:
+    note_year = st.text_input(
+        "发表年份/会议（选填）",
+        key="note_year",
+        placeholder="例如：2017 或 NeurIPS 2017",
+    )
+
+col_meta3, col_meta4 = st.columns(2)
+
+with col_meta3:
+    note_read_date = st.date_input(
+        "阅读日期 *",
+        value=date.today(),
+        key="note_read_date",
+        help="默认为今天，可修改为实际阅读日期",
+    )
+
+with col_meta4:
+    note_type = st.selectbox(
+        "笔记类型 *",
+        options=NOTE_TYPES,
+        key="note_type",
+    )
+
+note_tags = st.multiselect(
+    "标签 * (至少选择 1 个)",
+    options=PREDEFINED_TAGS,
+    key="note_tags",
+    help="选择与笔记相关的标签",
 )
 
 # 同步输入到 session state（用于保存功能）
@@ -231,23 +284,48 @@ with col2:
     if st.session_state.pending_save:
         if st.button("✅ 确认保存"):
             try:
-                # 获取当前身份
-                current_identity = IDENTITIES[st.session_state.selected_identity]
+                # Phase 3: 验证必填字段
+                if not st.session_state.note_title or not st.session_state.note_title.strip():
+                    st.error("❌ 请输入论文标题")
+                    st.session_state.pending_save = False
+                elif not st.session_state.note_conclusion or not st.session_state.note_conclusion.strip():
+                    st.error("❌ 请输入阅读结论")
+                    st.session_state.pending_save = False
+                elif not st.session_state.note_tags:
+                    st.error("❌ 请至少选择 1 个标签")
+                    st.session_state.pending_save = False
+                else:
+                    # 获取当前身份
+                    current_identity = IDENTITIES[st.session_state.selected_identity]
 
-                # 调用 save_note
-                result = asyncio.run(
-                    save_note(
-                        identity=current_identity,
-                        title=st.session_state.note_title,
-                        conclusion=st.session_state.note_conclusion,
-                        confirmed=True,
+                    # Phase 3: 构造元数据对象
+                    metadata = NoteMetadata(
+                        title=st.session_state.note_title.strip(),
+                        author=st.session_state.note_author.strip() if st.session_state.note_author else None,
+                        year=st.session_state.note_year.strip() if st.session_state.note_year else None,
+                        read_date=st.session_state.note_read_date,
+                        tags=st.session_state.note_tags,
+                        note_type=st.session_state.note_type,
                     )
-                )
 
-                # 保存结果并重置 pending_save
-                st.session_state.write_result = result
+                    # 调用 save_note（带元数据）
+                    result = asyncio.run(
+                        save_note(
+                            identity=current_identity,
+                            title=st.session_state.note_title,
+                            conclusion=st.session_state.note_conclusion,
+                            confirmed=True,
+                            metadata=metadata,
+                        )
+                    )
+
+                    # 保存结果并重置 pending_save
+                    st.session_state.write_result = result
+                    st.session_state.pending_save = False
+
+            except ValueError as e:
+                st.error(f"❌ 元数据验证失败: {str(e)}")
                 st.session_state.pending_save = False
-
             except Exception as e:
                 st.error(f"保存失败：{str(e)}")
                 st.session_state.pending_save = False
@@ -313,31 +391,88 @@ question = st.text_input(
     "输入问题",
     value=st.session_state.question,
     key="question_input",
+    placeholder="例如：Transformer 的注意力机制如何工作？",
 )
 
 st.session_state.question = question
 
-if st.button("🔍 查询记忆"):
-    try:
-        # 获取当前身份
-        current_identity = IDENTITIES[st.session_state.selected_identity]
+# Phase 3: 高级过滤器（可折叠）
+with st.expander("🔧 高级过滤（可选）", expanded=False):
+    # 标签过滤
+    query_tags = st.multiselect(
+        "按标签过滤（多选，匹配任一标签）",
+        options=PREDEFINED_TAGS,
+        key="query_tags",
+        help="留空则不按标签过滤",
+    )
 
-        # 创建 LLM 客户端
-        llm_client = MockLLMClient()
+    # 时间范围过滤
+    query_time_range = st.selectbox(
+        "时间范围",
+        options=TIME_RANGE_OPTIONS,
+        key="query_time_range",
+    )
 
-        # 调用 ask_memory
-        result = asyncio.run(
-            ask_memory(
-                identity=current_identity,
-                question=st.session_state.question,
-                llm_client=llm_client,
-            )
-        )
+    # 自定义日期范围
+    custom_start, custom_end = None, None
+    if query_time_range == "自定义":
+        col_date1, col_date2 = st.columns(2)
+        with col_date1:
+            custom_start = st.date_input("起始日期", key="custom_start_date")
+        with col_date2:
+            custom_end = st.date_input("结束日期", key="custom_end_date")
 
-        st.session_state.ask_result = result
+if st.button("🔍 查询记忆", type="primary"):
+    if not st.session_state.question:
+        st.warning("⚠️ 请输入查询内容")
+    else:
+        try:
+            # 获取当前身份
+            current_identity = IDENTITIES[st.session_state.selected_identity]
 
-    except Exception as e:
-        st.error(f"查询失败：{str(e)}")
+            # 创建 LLM 客户端
+            llm_client = MockLLMClient()
+
+            # Phase 3: 计算时间范围
+            start_date, end_date = None, None
+            if st.session_state.query_time_range != "全部时间":
+                try:
+                    start_date, end_date = calculate_date_range(
+                        range_option=st.session_state.query_time_range,
+                        custom_start=custom_start if st.session_state.query_time_range == "自定义" else None,
+                        custom_end=custom_end if st.session_state.query_time_range == "自定义" else None,
+                    )
+                except ValueError as e:
+                    st.error(f"❌ 日期范围错误: {str(e)}")
+                    start_date, end_date = None, None
+
+            # 显示过滤条件（如果有）
+            filter_info = []
+            if st.session_state.query_tags:
+                filter_info.append(f"标签: {', '.join(st.session_state.query_tags)}")
+            if start_date and end_date:
+                filter_info.append(f"时间: {start_date} ~ {end_date}")
+
+            if filter_info:
+                st.info(f"🔎 应用过滤条件：{' | '.join(filter_info)}")
+
+            # Phase 3: 调用带过滤参数的检索
+            with st.spinner("正在检索笔记..."):
+                result = asyncio.run(
+                    ask_memory(
+                        identity=current_identity,
+                        question=st.session_state.question,
+                        llm_client=llm_client,
+                        tags=st.session_state.query_tags if st.session_state.query_tags else None,
+                        start_date=start_date,
+                        end_date=end_date,
+                    )
+                )
+
+                st.session_state.ask_result = result
+
+        except Exception as e:
+            st.error(f"查询失败：{str(e)}")
 
 st.divider()
 
@@ -406,4 +541,8 @@ if st.button("🆕 新建会话"):
     st.session_state.sync_result = None
     st.session_state.ask_result = None
     st.session_state.pdf_extract_result = None
+    # Phase 3: 清除元数据 widget 状态
+    # 注意：widget 绑定的 key 在 Streamlit 中会自动管理
+    # 这里只清除存储的结果状态
     st.success("✓ 已清除会话数据")
+    st.rerun()

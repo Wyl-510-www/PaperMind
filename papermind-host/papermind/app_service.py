@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Protocol
+from datetime import datetime, date
+from typing import Protocol, Optional, List
 
 # 导入 Phase 1.3 的数据结构
 from papermind.memory_writer import WriteResult, save_turn_to_memory
 from papermind.outbox_sync import SyncResult, sync_outbox_batch
+from papermind.models import NoteMetadata
 
 
 @dataclass(frozen=True)
@@ -63,8 +64,9 @@ async def save_note(
     conclusion: str,
     *,
     confirmed: bool,
+    metadata: Optional[NoteMetadata] = None,
 ) -> WriteResult:
-    """保存笔记到 Memory V2。
+    """保存笔记到 Memory V2（支持 Phase 3 元数据）。
 
     封装 Phase 1.3 的 save_turn_to_memory，提供适合页面调用的业务接口。
     实现二次确认门控、空输入验证、身份透传和状态直传。
@@ -74,6 +76,7 @@ async def save_note(
         title: 论文标题
         conclusion: 阅读结论
         confirmed: 用户是否确认保存
+        metadata: 笔记元数据（Phase 3 新增，可选）
 
     Returns:
         WriteResult: Phase 1.3 的完整写入结果，包含五种状态
@@ -88,6 +91,7 @@ async def save_note(
         - 空标题或空正文时返回 skipped
         - 每次调用生成新的 UUID turn_id
         - 用户消息格式：论文：{title}\n\n阅读结论：{conclusion}
+        - Phase 3: 如果提供 metadata，将序列化后存入 Memory V2 metadata 字段
     """
     # 空输入验证
     if not title or not title.strip():
@@ -126,6 +130,14 @@ async def save_note(
 
     # 组合用户消息
     user_text = f"论文：{title}\n\n阅读结论：{conclusion}"
+
+    # Phase 3: 如果提供元数据，将其附加到用户消息中
+    # 注意：当前 save_turn_to_memory 不直接支持 metadata 参数
+    # 作为过渡方案，将元数据编码到 user_text 中
+    # TODO: Phase 3.2 需要修改 memory_writer.py 支持 metadata 参数
+    if metadata:
+        metadata_text = f"\n\n[元数据]\n作者: {metadata.author or '未知'}\n年份: {metadata.year or '未知'}\n阅读日期: {metadata.read_date}\n标签: {', '.join(metadata.tags)}\n类型: {metadata.note_type}"
+        user_text += metadata_text
 
     # 调用 Phase 1.3 写入，透传身份和结果
     result = await save_turn_to_memory(
@@ -171,16 +183,22 @@ async def ask_memory(
     question: str,
     *,
     llm_client: LLMClient,
+    tags: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> AskResult:
-    """查询 Memory V2 并生成答案。
+    """查询 Memory V2 并生成答案（Phase 3: 支持标签和时间过滤）。
 
     基于用户身份检索历史记忆，并使用 LLM 生成基于证据的回答。
-    严格区分四种状态：有证据且回答成功、无证据、检索失败、回答失败。
+    Phase 3: 支持两阶段检索——先硬过滤（标签+时间），再语义检索。
 
     Args:
         identity: 用户身份标识（tenant_id, user_id）
         question: 用户问题
         llm_client: LLM 客户端，用于生成回答
+        tags: 标签列表（Phase 3 新增），使用 OR 逻辑（匹配任一标签）
+        start_date: 起始日期（Phase 3 新增），过滤 read_date >= start_date 的笔记
+        end_date: 结束日期（Phase 3 新增），过滤 read_date <= end_date 的笔记
 
     Returns:
         AskResult: 查询结果，包含四种状态之一
@@ -201,13 +219,16 @@ async def ask_memory(
 
     logger = logging.getLogger(__name__)
 
-    # 步骤 1: 调用结构化检索
+    # 步骤 1: 调用结构化检索（Phase 3: 传递过滤参数）
     try:
         evidence_list = await retrieve_structured_evidence(
             query=question,
             tenant_id=identity.tenant_id,
             user_id=identity.user_id,
             limit=5,
+            tags=tags,
+            start_date=start_date,
+            end_date=end_date,
         )
     except asyncio.TimeoutError:
         logger.warning(
