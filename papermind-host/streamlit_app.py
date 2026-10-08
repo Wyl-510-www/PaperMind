@@ -8,6 +8,8 @@ PaperMind Phase 2 Streamlit 单页应用
 """
 
 import asyncio
+import tempfile
+from pathlib import Path
 import streamlit as st
 from papermind.app_service import (
     Identity,
@@ -19,6 +21,7 @@ from papermind.app_service import (
     sync_notes,
     ask_memory,
 )
+from papermind.pdf_extractor import extract_pdf_text, PDFExtractResult
 
 
 # Mock LLMClient for ask_memory
@@ -46,6 +49,8 @@ if "question" not in st.session_state:
     st.session_state.question = ""
 if "ask_result" not in st.session_state:
     st.session_state.ask_result = None
+if "pdf_extract_result" not in st.session_state:
+    st.session_state.pdf_extract_result = None
 
 
 # ===== 1. 标题与身份选择 =====
@@ -65,6 +70,70 @@ st.divider()
 
 # ===== 2. 笔记输入区 =====
 st.subheader("📝 保存阅读笔记")
+
+# PDF 上传功能
+st.write("**方式 1: 上传 PDF 论文**")
+uploaded_file = st.file_uploader(
+    "选择 PDF 文件（<10MB）",
+    type=["pdf"],
+    help="支持可复制文本的 PDF，暂不支持扫描版和加密 PDF",
+)
+
+if uploaded_file is not None:
+    # 检查文件大小（10MB 限制）
+    file_size_mb = len(uploaded_file.getvalue()) / (1024 * 1024)
+
+    if file_size_mb > 10:
+        st.error(f"文件过大（{file_size_mb:.1f}MB），请上传小于 10MB 的 PDF")
+    else:
+        with st.spinner("正在提取 PDF 文本..."):
+            # 保存到临时文件
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_path = Path(tmp_file.name)
+
+            try:
+                # 提取 PDF 文本
+                result = asyncio.run(extract_pdf_text(tmp_path))
+                st.session_state.pdf_extract_result = result
+
+                # 清理临时文件
+                tmp_path.unlink()
+
+                if result.success:
+                    st.success("✓ PDF 文本提取成功")
+
+                    # 自动填充标题
+                    if result.title:
+                        st.session_state.note_title = result.title
+
+                    # 自动填充内容
+                    if result.text:
+                        st.session_state.note_conclusion = result.text
+
+                    # 展示预览
+                    if result.preview:
+                        with st.expander("📄 提取预览（前 500 字符）"):
+                            st.text(result.preview)
+                else:
+                    # 显示错误信息
+                    st.error(f"✗ {result.error_message}")
+
+                    # 根据错误码给出具体建议
+                    if result.error_code == "encrypted":
+                        st.info("💡 建议：请使用解密工具移除 PDF 密码后重试")
+                    elif result.error_code == "scanned":
+                        st.info("💡 建议：扫描版 PDF 需要 OCR 识别，请手动输入内容")
+                    elif result.error_code == "empty":
+                        st.info("💡 建议：PDF 可能是图片格式，请手动输入内容")
+
+            except Exception as e:
+                st.error(f"PDF 处理失败：{str(e)}")
+                # 确保清理临时文件
+                if tmp_path.exists():
+                    tmp_path.unlink()
+
+st.write("**方式 2: 手动输入**")
 
 note_title = st.text_input(
     "论文标题",
@@ -269,4 +338,5 @@ if st.button("🆕 新建会话"):
     st.session_state.write_result = None
     st.session_state.sync_result = None
     st.session_state.ask_result = None
+    st.session_state.pdf_extract_result = None
     st.success("✓ 已清除会话数据")

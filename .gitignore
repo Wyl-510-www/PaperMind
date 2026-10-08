@@ -66,3 +66,7 @@ Thumbs.db
 
 # Project specific
 memoryV2-core.zip
+
+# Temporary uploads (Phase 2.2)
+tmp/
+papermind-host/tmp/
