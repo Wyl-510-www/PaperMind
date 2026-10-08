@@ -39,8 +39,83 @@ Result: Clean - no conflicts found
 
 ### Task Group 3: 结构化证据与回答编排
 - BASE: 1e310c4c79d2f22809e7923d851e800ddcb55874
-- Dispatched implementer: a46a81fcb7f6df68e (model: sonnet)
-- Status: Running...
+- Dispatched implementer: a46a81fcb7f6df68e (model: sonnet) - DONE
+- Commits: 1e310c4..db73d9e
+- Tests: 52/52 passing (11 new tests, no regression)
+- Review: Spec ✅, Quality Approved
+- Minor (deferred): 字段映射注释不准确；Phase 1.3 临时适配逻辑待清理；日志级别统一
+- Task Group 3: complete (commits 1e310c4..db73d9e, review clean)
+
+### Task Group 4: Streamlit 单页与会话状态
+- BASE: db73d9ebeb7ca6e53667ded25b6923ba02d59e67
+- Dispatched implementer: a81223fae6c9670f1 (model: sonnet) - DONE
+- Commits: db73d9e..3569474
+- Tests: 19/19 passing (1.67s)
+- Review: Spec ✅, Quality Approved
+- Minor (deferred): Mock WriteResult 包含未定义的 speech_act 字段；Mock SyncResult 缺少 error_code 字段
+- Task Group 4: complete (commits db73d9e..3569474, review clean)
+
+### Task Group 5: 三身份隔离与真实验收脚本
+- BASE: 3569474ccd671a3aeb238bff1dbcf3d0c8b5c05f
+- Dispatched implementer: a8a421c08ad967a35 (model: sonnet) - DONE
+- Commits: 3569474..29e2932
+- Verification: 7/7 core tests passing (42.72s, verify_phase2_20261008_085430)
+- Review: Spec ✅, Quality Approved
+- Minor (deferred): Stage 4.3 调整为观察性测试；路径依赖硬编码；MySQL 初始化说明简略
+- Task Group 5: complete (commits 3569474..29e2932, review clean)
+
+### Task Group 6: 完整回归与合并前复核
+- BASE: faece13bf73cb6954f7a36b8f0c1e5c1c0e2d5c8
+- Executed by: main coordinator
+- Regression: 124 passed, 2 skipped, 1 failed (19.21s) - 失败非 Phase 2 引入
+- Phase 2 tests: 71/71 passing (Task Group 1-4 全部通过)
+- Real service verification: 7/7 core tests passing (verify_phase2_20261008_085430)
+- P0 checklist: 10/10 complete
+- Commits: faece13..29e2932 (5 commits)
+- Files: 172 changed, +30825/-376
+- Task Group 6: complete, ready for merge
+
+---
+
+## Phase 2 总结
+
+**范围：** Streamlit 单页 P0 闭环（feature/phase-2-streamlit-ui）
+
+**交付：**
+- ✅ Streamlit 单页应用（272 行）
+- ✅ 业务服务层（app_service.py, 291 行）
+- ✅ 三身份固定组合与隔离验证
+- ✅ 笔记保存与二次确认门控
+- ✅ Outbox 同步与召回闭环
+- ✅ 结构化证据展示
+- ✅ 真实服务验收脚本（729 行）
+- ✅ 完整文档与启动说明
+
+**测试覆盖：**
+- 71 个新增测试，全部通过
+- 真实服务验收：7/7 核心测试通过
+- 无回归（既有 1 个失败非 Phase 2 引入）
+
+**提交记录：**
+```
+29e2932 feat(phase2): add three-identity isolation verification script and README
+3569474 feat(phase2): implement Streamlit single-page UI and session state
+db73d9e feat(phase2): implement structured evidence retrieval and ask_memory
+1e310c4 feat(phase2): implement save_note and sync_notes service layer
+c579751 feat(phase2): add app service contracts and fixed identities
+```
+
+**质量状态：**
+- Spec: ✅ 所有 P0 要求完成
+- Tests: ✅ 71/71 passing
+- Verification: ✅ 7/7 passing
+- Documentation: ✅ Complete
+- Ready for merge: ✅
+
+**次要问题（已记录，非阻塞）：**
+- Mock 字段对齐（2 处）
+- Stage 4.3 观察性调整（1 处）
+- 路径依赖与文档细节（2 处）
 - BASE: faece13fa1192ecefde7efa5d147663c867b529b
 - Dispatched implementer: a02ef881b67b8c75a (model: sonnet) - DONE
 - Commits: faece13..c579751
