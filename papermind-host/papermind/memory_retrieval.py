@@ -32,17 +32,23 @@ async def retrieve_structured_evidence(
     tenant_id: str,
     user_id: str,
     limit: int = 5,
+    tags: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> list[EvidenceItem]:
-    """检索用户长期记忆并返回结构化证据列表。
+    """检索用户长期记忆并返回结构化证据列表（支持标签和时间过滤）。
 
     此函数提供结构化检索接口，返回 EvidenceItem 列表供业务层使用。
-    与 retrieve_memory_context 不同，此函数不格式化为字符串，而是保留结构化数据。
+    Phase 3: 支持两阶段检索——先硬过滤（标签+时间），再语义检索。
 
     Args:
         query: 用户查询文本，用于语义检索
         tenant_id: 租户 ID，用于隔离不同租户的记忆
         user_id: 用户 ID，用于隔离同一租户下不同用户的记忆
         limit: 返回的最大证据数量，默认 5 条
+        tags: 标签列表（Phase 3 新增），使用 OR 逻辑（匹配任一标签）
+        start_date: 起始日期（Phase 3 新增），过滤 read_date >= start_date 的笔记
+        end_date: 结束日期（Phase 3 新增），过滤 read_date <= end_date 的笔记
 
     Returns:
         EvidenceItem 列表，每个 EvidenceItem 包含：
@@ -60,19 +66,29 @@ async def retrieve_structured_evidence(
         Exception: 其他检索错误
 
     Note:
-        - 此函数抛出异常而不是返回降级提示，让调用者决定如何处理错误
+        - Phase 3: 如果提供标签或时间范围，先进行硬过滤，再语义检索
+        - 如果未提供标签和时间，直接全局语义检索（兼容 Phase 2 行为）
         - 调用者应区分空列表（无证据）和异常（检索失败）
 
     Example:
+        >>> # Phase 2 全局检索
         >>> evidence_list = await retrieve_structured_evidence(
         ...     query="我的研究方向是什么",
         ...     tenant_id="tenant_default",
         ...     user_id="alice",
         ...     limit=5
         ... )
-        >>> if evidence_list:
-        ...     print(f"找到 {len(evidence_list)} 条证据")
-        ...     print(f"第一条：{evidence_list[0].content}")
+
+        >>> # Phase 3 标签过滤检索
+        >>> evidence_list = await retrieve_structured_evidence(
+        ...     query="Transformer 的注意力机制",
+        ...     tenant_id="tenant_default",
+        ...     user_id="alice",
+        ...     tags=["Transformer", "注意力机制"],
+        ...     start_date=date(2026, 1, 1),
+        ...     end_date=date(2026, 1, 31),
+        ...     limit=5
+        ... )
     """
     # 延迟导入避免循环依赖
     from papermind.app_service import EvidenceItem
@@ -86,6 +102,9 @@ async def retrieve_structured_evidence(
             tenant_id=tenant_id,
             user_id=user_id,
             limit=limit,
+            tags=tags,
+            start_date=start_date,
+            end_date=end_date,
         ),
         timeout=config.memory_retrieval_timeout,
     )
@@ -190,29 +209,36 @@ async def _call_memory_v2_retrieval(
     tenant_id: str,
     user_id: str,
     limit: int,
+    tags: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> Optional[dict]:
-    """调用 Memory V2 检索接口。
+    """调用 Memory V2 检索接口（Phase 3: 支持元数据过滤）。
 
     此函数封装与 Memory V2 的实际交互，包括：
-    1. 初始化 Memory V2 依赖（IndexV2, Session, Reranker）
-    2. 调用 EvidencePipeline.assemble() 执行检索
-    3. 返回 EvidencePack 对象
+    1. Phase 3: 如果提供标签或时间范围，先查询 MySQL 过滤 Memory IDs
+    2. 初始化 Memory V2 依赖（IndexV2, Session, Reranker）
+    3. 调用 EvidencePipeline.assemble() 执行检索（限制在过滤后的 Memory IDs）
+    4. 返回 EvidencePack 对象
 
     Args:
         query: 查询文本
         tenant_id: 租户 ID（用于 Hard Filter）
         user_id: 用户 ID（用于 Hard Filter）
         limit: 返回的最大证据数量
+        tags: 标签列表（Phase 3 新增），使用 OR 逻辑
+        start_date: 起始日期（Phase 3 新增）
+        end_date: 结束日期（Phase 3 新增）
 
     Returns:
         EvidencePack 的字典表示，包含检索到的证据列表。
         如果检索失败或无结果，返回 None。
 
     Note:
-        租户和用户隔离通过以下机制实现：
-        1. tenant_id 和 user_id 作为参数传递给 EvidencePipeline
-        2. HardFilter 会验证候选记忆的租户和用户是否匹配
-        3. 只有匹配的记忆才会被返回
+        Phase 3 两阶段检索：
+        1. 如果提供标签或时间，先从 MySQL metadata 过滤 Memory IDs
+        2. 将过滤后的 Memory IDs 传递给向量检索，缩小检索范围
+        3. 如果未提供标签和时间，直接全局检索（兼容 Phase 2）
     """
     try:
         # 导入 Memory V2 核心模块
@@ -269,6 +295,30 @@ async def _call_memory_v2_retrieval(
         session = SessionLocal()
 
         try:
+            # Phase 3: 如果提供标签或时间范围，先进行硬过滤
+            filtered_memory_ids = None
+            if tags or start_date or end_date:
+                filtered_memory_ids = _filter_memory_ids_by_metadata(
+                    session=session,
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    tags=tags,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
+
+                # 如果硬过滤后无结果，直接返回空
+                if filtered_memory_ids is not None and len(filtered_memory_ids) == 0:
+                    logger.info(
+                        "Hard filter returned no results: tenant=%s, user=%s, tags=%s, date_range=%s-%s",
+                        tenant_id,
+                        user_id,
+                        tags,
+                        start_date,
+                        end_date,
+                    )
+                    return {"query": query, "items": [], "generated_at": datetime.now()}
+
             # 初始化 Memory V2 组件
             base_index = IndexV2(embedding_dim=1536)  # text-embedding-v4 维度
             embedder = RealEmbedder()  # 创建 embedder
@@ -284,13 +334,32 @@ async def _call_memory_v2_retrieval(
                 token_budget=2000,  # 默认 token 预算
             )
 
-            # 调用检索（同步方法，但包装在 async 函数中）
+            # Phase 3: 如果有过滤后的 Memory IDs，传递给检索管道
+            # TODO: 当前 EvidencePipeline.assemble 不支持 allowed_memory_ids 参数
+            # 临时方案：先全局检索，然后在结果中过滤
             evidence_pack = pipeline.assemble(
                 query=query,
                 tenant_id=tenant_id,
                 user_id=user_id,
                 now=datetime.now(),
             )
+
+            # Phase 3: 如果提供了过滤条件，在结果中过滤
+            if filtered_memory_ids is not None:
+                filtered_items = [
+                    item for item in evidence_pack.items
+                    if item.memory_id in filtered_memory_ids
+                ]
+                # 如果过滤后无结果，记录日志
+                if not filtered_items:
+                    logger.info(
+                        "Semantic search returned results, but none matched metadata filter: "
+                        "tenant=%s, user=%s, original_count=%d",
+                        tenant_id,
+                        user_id,
+                        len(evidence_pack.items),
+                    )
+                evidence_pack.items = filtered_items
 
             # 转换为字典（便于格式化）
             return {
@@ -319,6 +388,104 @@ async def _call_memory_v2_retrieval(
     except Exception as e:
         logger.error("Memory V2 检索调用失败: %s", str(e), exc_info=True)
         raise
+
+
+def _filter_memory_ids_by_metadata(
+    session,
+    tenant_id: str,
+    user_id: str,
+    tags: list[str] | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[str] | None:
+    """根据元数据（标签、时间范围）过滤 Memory IDs（Phase 3）。
+
+    查询 Memory V2 数据库，根据 metadata JSON 字段中的标签和阅读日期进行过滤。
+
+    Args:
+        session: SQLAlchemy session
+        tenant_id: 租户 ID
+        user_id: 用户 ID
+        tags: 标签列表（OR 逻辑，匹配任一标签）
+        start_date: 起始日期（过滤 read_date >= start_date）
+        end_date: 结束日期（过滤 read_date <= end_date）
+
+    Returns:
+        符合条件的 Memory IDs 列表，如果无过滤条件返回 None（表示不过滤）
+        如果有过滤条件但无结果，返回空列表
+
+    Note:
+        - 使用 MySQL JSON 函数查询 metadata 字段
+        - 标签使用 OR 逻辑：JSON_OVERLAPS(metadata->'$.tags', JSON_ARRAY(...))
+        - 时间使用范围查询：metadata->>'$.read_date' BETWEEN ... AND ...
+    """
+    from datetime import date as date_type
+
+    # 如果没有任何过滤条件，返回 None（不过滤）
+    if not tags and not start_date and not end_date:
+        return None
+
+    try:
+        from sqlalchemy import text
+
+        # 构建 SQL 查询
+        # 注意：这里使用原生 SQL，因为 SQLAlchemy ORM 的 JSON 查询在不同数据库间差异较大
+        query = text("""
+            SELECT memory_id
+            FROM memory_v2_record
+            WHERE tenant_id = :tenant_id
+              AND user_id = :user_id
+              AND status = 'active'
+              AND (:tags_filter OR JSON_OVERLAPS(
+                  JSON_EXTRACT(metadata, '$.tags'),
+                  :tags_json
+              ))
+              AND (:no_start_date OR JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.read_date')) >= :start_date)
+              AND (:no_end_date OR JSON_UNQUOTE(JSON_EXTRACT(metadata, '$.read_date')) <= :end_date)
+        """)
+
+        # 准备参数
+        import json
+        params = {
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "tags_filter": not tags,  # 如果没有标签过滤，跳过标签条件
+            "tags_json": json.dumps(tags) if tags else "[]",
+            "no_start_date": start_date is None,
+            "start_date": start_date.isoformat() if start_date else "",
+            "no_end_date": end_date is None,
+            "end_date": end_date.isoformat() if end_date else "",
+        }
+
+        # 执行查询
+        result = session.execute(query, params)
+        memory_ids = [row[0] for row in result.fetchall()]
+
+        logger.info(
+            "Metadata filter returned %d memory IDs: tenant=%s, user=%s, tags=%s, date_range=%s-%s",
+            len(memory_ids),
+            tenant_id,
+            user_id,
+            tags,
+            start_date,
+            end_date,
+        )
+
+        return memory_ids
+
+    except Exception as e:
+        logger.error(
+            "Metadata filtering failed: tenant=%s, user=%s, tags=%s, date_range=%s-%s, error=%s",
+            tenant_id,
+            user_id,
+            tags,
+            start_date,
+            end_date,
+            str(e),
+            exc_info=True,
+        )
+        # 过滤失败时返回 None，让检索继续（降级到全局检索）
+        return None
 
 
 def format_evidence_pack(evidence_pack: Optional[dict]) -> str:

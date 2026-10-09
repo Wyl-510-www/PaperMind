@@ -671,6 +671,9 @@ class TestRetrieveStructuredEvidence:
                 tenant_id=identity.tenant_id,
                 user_id=identity.user_id,
                 limit=5,
+                tags=None,
+                start_date=None,
+                end_date=None,
             )
 
     @pytest.mark.asyncio
@@ -810,6 +813,9 @@ class TestRetrieveStructuredEvidence:
                 tenant_id="tenant_custom",
                 user_id="user_custom",
                 limit=10,
+                tags=None,
+                start_date=None,
+                end_date=None,
             )
 
 
@@ -854,6 +860,9 @@ class TestAskMemory:
                 tenant_id=identity.tenant_id,
                 user_id=identity.user_id,
                 limit=5,
+                tags=None,
+                start_date=None,
+                end_date=None,
             )
 
             # 验证 LLM 被调用
@@ -1012,6 +1021,9 @@ class TestAskMemory:
                 tenant_id="tenant_custom",
                 user_id="user_custom",
                 limit=5,
+                tags=None,
+                start_date=None,
+                end_date=None,
             )
 
     @pytest.mark.asyncio

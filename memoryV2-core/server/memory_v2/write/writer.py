@@ -70,6 +70,7 @@ class MemoryWriter:
         occurred_at: datetime | None = None,
         tenant_id: str = "default",
         previous_user_text: str | None = None,
+        metadata: dict | None = None,
     ) -> V2WriteResult:
         """写入一轮对话的记忆。
 
@@ -82,6 +83,7 @@ class MemoryWriter:
             occurred_at: 消息发生时间（UTC），默认当前时间
             tenant_id: 租户 ID
             previous_user_text: 前一轮用户消息（P1-1：透传给 extractor 作为上下文）
+            metadata: Phase 3 笔记元数据（JSON 字典），将保存到 MemoryRecord.metadata
 
         Returns:
             V2WriteResult: 类型化写入结果
@@ -215,6 +217,7 @@ class MemoryWriter:
                         commit_id = await self.dispatcher.dispatch(
                             decision, tenant_id, user_id, turn_id,
                             occurred_at=occurred_at,
+                            metadata=metadata,
                         )
                         # P0-2修复: 检查落库结果，错误时标记失败
                         trace.repository_commits.append(commit_id)
