@@ -88,6 +88,7 @@ class FactStore:
         source_turn_id: str | None = None,
         occurred_at: datetime | None = None,
         is_update: bool = False,  # 新增：是否为更新操作
+        metadata: dict | None = None,  # Phase 3: 笔记元数据
     ) -> str:
         """写入 semantic 事实。
 
@@ -97,6 +98,7 @@ class FactStore:
             source_turn_id: 来源轮次
             occurred_at: 事件发生时间
             is_update: 是否为更新操作（由 Extractor 检测更新语义后传入）
+            metadata: Phase 3 笔记元数据（JSON 字典），存入 MemoryRecord.metadata
 
         Returns:
             memory_id
@@ -145,6 +147,8 @@ class FactStore:
             "provenance": getattr(candidate, "provenance", None) or getattr(candidate, "evidence_type", None),
             # Fix2: observed_at — 消息发生的 UTC 时间（用于 scorer 的 recency 和冲突裁决）
             "occurred_at": occurred_at,
+            # Phase 3: 笔记元数据（使用 note_metadata 对应数据库的 metadata 列）
+            "note_metadata": metadata,
         }
 
         # === UPDATE 语义检查（B5 修复）===

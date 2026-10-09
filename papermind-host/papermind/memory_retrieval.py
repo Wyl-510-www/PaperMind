@@ -246,7 +246,7 @@ async def _call_memory_v2_retrieval(
         from server.memory_v2.retrieve.index_v2 import IndexV2
         from server.memory_v2.retrieve.embedder import RealEmbedder
         from server.database.database_bailian_config import Config as DBConfig
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
         from typing import Any
 
@@ -320,46 +320,46 @@ async def _call_memory_v2_retrieval(
                     return {"query": query, "items": [], "generated_at": datetime.now()}
 
             # 初始化 Memory V2 组件
-                base_index = IndexV2(embedding_dim=1536)  # text-embedding-v4 维度
-                embedder = RealEmbedder()  # 创建 embedder
-                index = IndexV2WithEmbedder(base_index, embedder)  # 包装后的 index
-                # Phase 1.3: 使用 NoopReranker（不做重排）
-                reranker = NoopReranker()
+            base_index = IndexV2(embedding_dim=1536)  # text-embedding-v4 维度
+            embedder = RealEmbedder()  # 创建 embedder
+            index = IndexV2WithEmbedder(base_index, embedder)  # 包装后的 index
+            # Phase 1.3: 使用 NoopReranker（不做重排）
+            reranker = NoopReranker()
 
-                # 创建 EvidencePipeline
-                pipeline = EvidencePipeline(
-                    index=index,
-                    session=session,
-                    reranker=reranker,
-                    token_budget=2000,  # 默认 token 预算
-                )
+            # 创建 EvidencePipeline
+            pipeline = EvidencePipeline(
+                index=index,
+                session=session,
+                reranker=reranker,
+                token_budget=2000,  # 默认 token 预算
+            )
 
-                # Phase 3: 如果有过滤后的 Memory IDs，传递给检索管道
-                # TODO: 当前 EvidencePipeline.assemble 不支持 allowed_memory_ids 参数
-                # 临时方案：先全局检索，然后在结果中过滤
-                evidence_pack = pipeline.assemble(
-                    query=query,
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    now=datetime.now(),
-                )
+            # Phase 3: 如果有过滤后的 Memory IDs，传递给检索管道
+            # TODO: 当前 EvidencePipeline.assemble 不支持 allowed_memory_ids 参数
+            # 临时方案：先全局检索，然后在结果中过滤
+            evidence_pack = pipeline.assemble(
+                query=query,
+                tenant_id=tenant_id,
+                user_id=user_id,
+                now=datetime.now(),
+            )
 
-                # Phase 3: 如果提供了过滤条件，在结果中过滤
-                if filtered_memory_ids is not None:
-                    filtered_items = [
-                        item for item in evidence_pack.items
-                        if item.memory_id in filtered_memory_ids
-                    ]
-                    # 如果过滤后无结果，记录日志
-                    if not filtered_items:
-                        logger.info(
-                            "Semantic search returned results, but none matched metadata filter: "
-                            "tenant=%s, user=%s, original_count=%d",
-                            tenant_id,
-                            user_id,
-                            len(evidence_pack.items),
-                        )
-                    evidence_pack.items = filtered_items
+            # Phase 3: 如果提供了过滤条件，在结果中过滤
+            if filtered_memory_ids is not None:
+                filtered_items = [
+                    item for item in evidence_pack.items
+                    if item.memory_id in filtered_memory_ids
+                ]
+                # 如果过滤后无结果，记录日志
+                if not filtered_items:
+                    logger.info(
+                        "Semantic search returned results, but none matched metadata filter: "
+                        "tenant=%s, user=%s, original_count=%d",
+                        tenant_id,
+                        user_id,
+                        len(evidence_pack.items),
+                    )
+                evidence_pack.items = filtered_items
 
             # 转换为字典（便于格式化）
             return {
@@ -426,6 +426,8 @@ def _filter_memory_ids_by_metadata(
         return None
 
     try:
+        from sqlalchemy import text
+
         # 构建 SQL 查询
         # 注意：这里使用原生 SQL，因为 SQLAlchemy ORM 的 JSON 查询在不同数据库间差异较大
         query = text("""

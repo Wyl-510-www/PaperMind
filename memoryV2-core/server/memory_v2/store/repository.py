@@ -137,6 +137,8 @@ class Repository:
             evidence_type=fact_data.get("provenance") or fact_data.get("evidence_type"),
             # Fix2: occurred_at — 消息发生时间（UTC），用于 scorer recency 和冲突裁决
             occurred_at=fact_data.get("occurred_at"),
+            # Phase 3: 笔记元数据
+            note_metadata=fact_data.get("note_metadata"),
             created_at=now_utc(),
             updated_at=now_utc(),
         )

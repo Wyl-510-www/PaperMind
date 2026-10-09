@@ -131,21 +131,29 @@ async def save_note(
     # 组合用户消息
     user_text = f"论文：{title}\n\n阅读结论：{conclusion}"
 
-    # Phase 3: 如果提供元数据，将其附加到用户消息中
-    # 注意：当前 save_turn_to_memory 不直接支持 metadata 参数
-    # 作为过渡方案，将元数据编码到 user_text 中
-    # TODO: Phase 3.2 需要修改 memory_writer.py 支持 metadata 参数
+    # Phase 3: 准备元数据字典
+    metadata_dict = None
     if metadata:
+        metadata_dict = {
+            "title": metadata.title,
+            "author": metadata.author,
+            "year": metadata.year,
+            "read_date": metadata.read_date.isoformat() if metadata.read_date else None,
+            "tags": metadata.tags,
+            "note_type": metadata.note_type,
+        }
+        # 同时附加元数据到 user_text 中（便于 LLM 理解）
         metadata_text = f"\n\n[元数据]\n作者: {metadata.author or '未知'}\n年份: {metadata.year or '未知'}\n阅读日期: {metadata.read_date}\n标签: {', '.join(metadata.tags)}\n类型: {metadata.note_type}"
         user_text += metadata_text
 
-    # 调用 Phase 1.3 写入，透传身份和结果
+    # 调用 Phase 1.3 写入，透传身份和结果，传递 metadata
     result = await save_turn_to_memory(
         user_text=user_text,
         tenant_id=identity.tenant_id,
         user_id=identity.user_id,
         turn_id=turn_id,
         confirmed=True,
+        metadata=metadata_dict,
     )
 
     return result

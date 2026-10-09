@@ -243,8 +243,12 @@ class MemoryDispatcher:
         user_id: str,
         source_turn_id: str | None = None,
         occurred_at: datetime | None = None,
+        metadata: dict | None = None,
     ):
         """按 decision.route 分发。
+
+        Args:
+            metadata: Phase 3 笔记元数据（JSON 字典），传递给 semantic 路由
 
         Returns:
             memory_id (str) / EntityWriteReceipt / "discarded" / "pending"（DSM 未实现）
@@ -265,7 +269,7 @@ class MemoryDispatcher:
         if route == MemoryType.ENTITY_RELATION:
             result = self._route_entity(decision, tenant_id, user_id, source_turn_id)
         elif route == MemoryType.SEMANTIC or route == MemoryType.BEHAVIOR_POLICY:
-            result = await self._route_semantic(decision, tenant_id, user_id, source_turn_id, occurred_at=occurred_at)
+            result = await self._route_semantic(decision, tenant_id, user_id, source_turn_id, occurred_at=occurred_at, metadata=metadata)
         elif route in (MemoryType.EPISODIC, MemoryType.TASK):
             result = self._route_event(decision, tenant_id, user_id, source_turn_id, occurred_at=occurred_at)
         elif route == MemoryType.PREFERENCE:  # P0-4
@@ -306,8 +310,13 @@ class MemoryDispatcher:
         user_id: str,
         source_turn_id: str | None,
         occurred_at: datetime | None = None,
+        metadata: dict | None = None,
     ) -> str:
-        """路由到 semantic 事实存储，高敏 predicate 双写 Critical Identity"""
+        """路由到 semantic 事实存储，高敏 predicate 双写 Critical Identity
+
+        Args:
+            metadata: Phase 3 笔记元数据，传递给 fact_store
+        """
         if self.fact_store is None:
             logger.info("SEMANTIC route（无 fact_store，占位）: fact_key=%s", decision.fact_key)
             return "pending_phase2"
@@ -315,6 +324,7 @@ class MemoryDispatcher:
         result = self.fact_store.write_fact(
             decision, tenant_id, user_id, source_turn_id=source_turn_id,
             occurred_at=occurred_at,
+            metadata=metadata,
         )
 
         # 高敏 predicate 双写到 Critical Identity Store

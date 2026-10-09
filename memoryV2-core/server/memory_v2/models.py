@@ -79,6 +79,10 @@ class MemoryRecord(Base):
     # 幂等键（P0-2）：来自 MemoryCandidate.candidate_id，配合唯一约束做去重
     candidate_id = Column(String(64), nullable=True)
 
+    # Phase 3: 笔记元数据（标签、阅读日期、作者等）
+    # 注意：使用 note_metadata 而非 metadata，因为 metadata 是 SQLAlchemy 保留名
+    note_metadata = Column('metadata', JSON, nullable=True)
+
     # 审计
     source_turn_id = Column(String(128), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)

@@ -23,8 +23,8 @@
 | 1 | Attention Is All You Need | Transformer, 注意力机制 | 2026-01-01 | 详细笔记 |
 | 2 | RAG Survey | RAG（检索增强生成）, 向量数据库 | 2026-01-10 | 摘要 |
 | 3 | Memory Architecture | 长期记忆, 记忆架构, Agent 智能体 | 2026-01-13 | 详细笔记 |
-| 4 | Knowledge Graph | 知识图谱, 理论基础 | 2025-12-20 | 评论 |
-| 5 | Embedding Techniques | 嵌入技术, Transformer | 2026-01-12 | 问题 |
+| 4 | Knowledge Graph | 知识图谱, 应用案例 | 2025-12-20 | 评论 |
+| 5 | Attention Mechanism | 注意力机制, Transformer | 2026-01-12 | 问题 |
 
 ---
 
@@ -111,14 +111,14 @@ class Phase3Validator:
             {
                 "title": "Knowledge Graph 评论",
                 "content": "知识图谱在 NLP 中的应用...",
-                "tags": ["知识图谱", "理论基础"],
+                "tags": ["知识图谱", "应用案例"],
                 "read_date": date(2025, 12, 20),
                 "note_type": "评论",
             },
             {
-                "title": "Embedding Techniques 问题",
-                "content": "如何优化嵌入向量质量？",
-                "tags": ["嵌入技术", "Transformer"],
+                "title": "Attention Mechanism 问题",
+                "content": "如何优化注意力机制的计算效率？",
+                "tags": ["注意力机制", "Transformer"],
                 "read_date": date(2026, 1, 12),
                 "note_type": "问题",
             },
@@ -247,7 +247,7 @@ class Phase3Validator:
         expected_titles = [
             "Attention Is All You Need 阅读笔记",
             "Memory Architecture 研究",
-            "Embedding Techniques 问题",
+            "Attention Mechanism 问题",
         ]
         
         self.assert_true(

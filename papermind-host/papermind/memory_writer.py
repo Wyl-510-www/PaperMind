@@ -229,6 +229,7 @@ async def save_turn_to_memory(
     turn_id: str,
     *,
     confirmed: bool = False,
+    metadata: dict | None = None,
 ) -> WriteResult:
     """保存用户确认的论文笔记到 Memory V2。
 
@@ -241,6 +242,7 @@ async def save_turn_to_memory(
         user_id: 用户 ID，用于隔离同一租户下不同用户的记忆
         turn_id: 轮次 ID（UUID 字符串），用于溯源
         confirmed: 用户是否已确认保存（默认 False）
+        metadata: Phase 3 笔记元数据（标签、阅读日期等），将保存到数据库
 
     Returns:
         WriteResult: 写入结果，包含状态、Memory IDs 和反馈消息
@@ -340,12 +342,14 @@ async def save_turn_to_memory(
     try:
         with _fact_writer() as writer:
             # 直接 await 异步的 write_turn
+            # Phase 3: 如果提供了 metadata，通过 write_turn 传递
             raw_result = await writer.write_turn(
                 user_text=user_text,
                 user_id=user_id,
                 turn_id=turn_id,
                 occurred_at=datetime.now(timezone.utc),
                 tenant_id=tenant_id,
+                metadata=metadata,
             )
 
             # 归一化结果
